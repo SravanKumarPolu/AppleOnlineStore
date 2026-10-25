@@ -1,0 +1,338 @@
+{
+  "generated_at": "2026-10-25T16:44:52.575Z",
+  "environment": "isolated sandbox — 2 vCPU, 4 GB RAM, in-memory MongoDB, Node 24",
+  "duration_per_level_s": 10,
+  "levels": [
+    {
+      "level": "VU=1",
+      "vu": 1,
+      "duration_s": 10,
+      "total_requests": 60565,
+      "throughput_rps": 6056.5,
+      "error_rate": 0,
+      "latency": {
+        "avg_ms": 0.2,
+        "p50_ms": 0.1,
+        "p95_ms": 0.2,
+        "p99_ms": 0.5
+      },
+      "scenarios": {
+        "GET /health/ready": {
+          "count": 60565,
+          "rps": 6056.5,
+          "avg_ms": 0.2,
+          "p50_ms": 0.1,
+          "p95_ms": 0.2,
+          "p99_ms": 0.5,
+          "max_ms": 29.5,
+          "errors": 0
+        }
+      },
+      "server_cpu_pct_one_core": 48.6,
+      "server_rss_mb": 288
+    },
+    {
+      "level": "VU=10",
+      "vu": 10,
+      "duration_s": 10,
+      "total_requests": 116506,
+      "throughput_rps": 11650.6,
+      "error_rate": 0,
+      "latency": {
+        "avg_ms": 0.8,
+        "p50_ms": 0.4,
+        "p95_ms": 1.3,
+        "p99_ms": 15.1
+      },
+      "scenarios": {
+        "GET /health/ready": {
+          "count": 23906,
+          "rps": 2390.6,
+          "avg_ms": 0.8,
+          "p50_ms": 0.4,
+          "p95_ms": 1.9,
+          "p99_ms": 7.5,
+          "max_ms": 45.9,
+          "errors": 0
+        },
+        "GET /api/product/list": {
+          "count": 23009,
+          "rps": 2300.9,
+          "avg_ms": 0.9,
+          "p50_ms": 0.4,
+          "p95_ms": 1.2,
+          "p99_ms": 15.3,
+          "max_ms": 70.3,
+          "errors": 0
+        },
+        "GET /api/product/list?search": {
+          "count": 11596,
+          "rps": 1159.6,
+          "avg_ms": 0.8,
+          "p50_ms": 0.4,
+          "p95_ms": 1.2,
+          "p99_ms": 16.2,
+          "max_ms": 44.2,
+          "errors": 0
+        },
+        "POST /api/product/single": {
+          "count": 11457,
+          "rps": 1145.7,
+          "avg_ms": 0.9,
+          "p50_ms": 0.4,
+          "p95_ms": 1.3,
+          "p99_ms": 13.6,
+          "max_ms": 46.4,
+          "errors": 0
+        },
+        "GET /api/category/list": {
+          "count": 11729,
+          "rps": 1172.9,
+          "avg_ms": 0.8,
+          "p50_ms": 0.4,
+          "p95_ms": 1.3,
+          "p99_ms": 12.5,
+          "max_ms": 41.3,
+          "errors": 0
+        },
+        "POST /api/orders/userorders (auth)": {
+          "count": 11764,
+          "rps": 1176.4,
+          "avg_ms": 0.8,
+          "p50_ms": 0.4,
+          "p95_ms": 1.2,
+          "p99_ms": 17.5,
+          "max_ms": 48,
+          "errors": 0
+        },
+        "POST /api/cart/get (auth)": {
+          "count": 11541,
+          "rps": 1154.1,
+          "avg_ms": 0.9,
+          "p50_ms": 0.4,
+          "p95_ms": 1.2,
+          "p99_ms": 15.5,
+          "max_ms": 50.3,
+          "errors": 0
+        },
+        "GET /api/orders/all (admin)": {
+          "count": 11504,
+          "rps": 1150.4,
+          "avg_ms": 0.9,
+          "p50_ms": 0.4,
+          "p95_ms": 1.2,
+          "p99_ms": 19.6,
+          "max_ms": 62.4,
+          "errors": 0
+        }
+      },
+      "server_cpu_pct_one_core": 75.9,
+      "server_rss_mb": 298.3
+    },
+    {
+      "level": "VU=50",
+      "vu": 50,
+      "duration_s": 10,
+      "total_requests": 160044,
+      "throughput_rps": 16004.4,
+      "error_rate": 0,
+      "latency": {
+        "avg_ms": 3.1,
+        "p50_ms": 2.2,
+        "p95_ms": 4.5,
+        "p99_ms": 28.8
+      },
+      "scenarios": {
+        "GET /health/ready": {
+          "count": 22116,
+          "rps": 2211.6,
+          "avg_ms": 3.2,
+          "p50_ms": 2.2,
+          "p95_ms": 4.6,
+          "p99_ms": 28.8,
+          "max_ms": 38.8,
+          "errors": 0
+        },
+        "GET /api/product/list": {
+          "count": 22442,
+          "rps": 2244.2,
+          "avg_ms": 3.1,
+          "p50_ms": 2.2,
+          "p95_ms": 4.4,
+          "p99_ms": 28.7,
+          "max_ms": 41.1,
+          "errors": 0
+        },
+        "GET /api/product/list?search": {
+          "count": 19293,
+          "rps": 1929.3,
+          "avg_ms": 3.1,
+          "p50_ms": 2.2,
+          "p95_ms": 4.4,
+          "p99_ms": 28.7,
+          "max_ms": 34.5,
+          "errors": 0
+        },
+        "POST /api/product/single": {
+          "count": 19305,
+          "rps": 1930.5,
+          "avg_ms": 3.1,
+          "p50_ms": 2.2,
+          "p95_ms": 4.5,
+          "p99_ms": 28.7,
+          "max_ms": 35.1,
+          "errors": 0
+        },
+        "GET /api/category/list": {
+          "count": 19242,
+          "rps": 1924.2,
+          "avg_ms": 3.1,
+          "p50_ms": 2.2,
+          "p95_ms": 4.5,
+          "p99_ms": 28.7,
+          "max_ms": 35.6,
+          "errors": 0
+        },
+        "POST /api/orders/userorders (auth)": {
+          "count": 19228,
+          "rps": 1922.8,
+          "avg_ms": 3.1,
+          "p50_ms": 2.2,
+          "p95_ms": 4.4,
+          "p99_ms": 28.7,
+          "max_ms": 36,
+          "errors": 0
+        },
+        "POST /api/cart/get (auth)": {
+          "count": 19203,
+          "rps": 1920.3,
+          "avg_ms": 3.1,
+          "p50_ms": 2.2,
+          "p95_ms": 4.5,
+          "p99_ms": 28.8,
+          "max_ms": 36.6,
+          "errors": 0
+        },
+        "GET /api/orders/all (admin)": {
+          "count": 19215,
+          "rps": 1921.5,
+          "avg_ms": 3.1,
+          "p50_ms": 2.2,
+          "p95_ms": 4.4,
+          "p99_ms": 28.8,
+          "max_ms": 37.7,
+          "errors": 0
+        }
+      },
+      "server_cpu_pct_one_core": 73.5,
+      "server_rss_mb": 330.2
+    },
+    {
+      "level": "VU=100",
+      "vu": 100,
+      "duration_s": 10,
+      "total_requests": 158939,
+      "throughput_rps": 15893.9,
+      "error_rate": 0,
+      "latency": {
+        "avg_ms": 6.3,
+        "p50_ms": 4.5,
+        "p95_ms": 29.1,
+        "p99_ms": 32.6
+      },
+      "scenarios": {
+        "GET /health/ready": {
+          "count": 20509,
+          "rps": 2050.9,
+          "avg_ms": 6.3,
+          "p50_ms": 4.5,
+          "p95_ms": 29.2,
+          "p99_ms": 32.7,
+          "max_ms": 124.6,
+          "errors": 0
+        },
+        "GET /api/product/list": {
+          "count": 20776,
+          "rps": 2077.6,
+          "avg_ms": 6.3,
+          "p50_ms": 4.5,
+          "p95_ms": 29,
+          "p99_ms": 32.6,
+          "max_ms": 128.7,
+          "errors": 0
+        },
+        "GET /api/product/list?search": {
+          "count": 20676,
+          "rps": 2067.6,
+          "avg_ms": 6.3,
+          "p50_ms": 4.5,
+          "p95_ms": 29,
+          "p99_ms": 32.7,
+          "max_ms": 133.6,
+          "errors": 0
+        },
+        "POST /api/product/single": {
+          "count": 20513,
+          "rps": 2051.3,
+          "avg_ms": 6.3,
+          "p50_ms": 4.5,
+          "p95_ms": 29.2,
+          "p99_ms": 32.7,
+          "max_ms": 137.4,
+          "errors": 0
+        },
+        "GET /api/category/list": {
+          "count": 19165,
+          "rps": 1916.5,
+          "avg_ms": 6.3,
+          "p50_ms": 4.5,
+          "p95_ms": 29,
+          "p99_ms": 32.6,
+          "max_ms": 110.6,
+          "errors": 0
+        },
+        "POST /api/orders/userorders (auth)": {
+          "count": 19048,
+          "rps": 1904.8,
+          "avg_ms": 6.3,
+          "p50_ms": 4.5,
+          "p95_ms": 29.1,
+          "p99_ms": 32.7,
+          "max_ms": 111.5,
+          "errors": 0
+        },
+        "POST /api/cart/get (auth)": {
+          "count": 19227,
+          "rps": 1922.7,
+          "avg_ms": 6.2,
+          "p50_ms": 4.5,
+          "p95_ms": 29,
+          "p99_ms": 32.5,
+          "max_ms": 115.8,
+          "errors": 0
+        },
+        "GET /api/orders/all (admin)": {
+          "count": 19025,
+          "rps": 1902.5,
+          "avg_ms": 6.3,
+          "p50_ms": 4.5,
+          "p95_ms": 29.1,
+          "p99_ms": 32.6,
+          "max_ms": 120.3,
+          "errors": 0
+        }
+      },
+      "server_cpu_pct_one_core": 74.4,
+      "server_rss_mb": 334.2
+    }
+  ],
+  "recovery": {
+    "health_ready_avg_ms": 0.5,
+    "all_200": true
+  },
+  "notes": [
+    "Extreme load (500 VU) intentionally NOT executed: sandbox has 2 vCPU/4GB shared with the test harness itself.",
+    "Write-heavy order placement excluded from the mix to avoid exhausting seeded stock; read/auth paths dominate a real storefront traffic profile.",
+    "CPU percent is relative to ONE core (200% = both cores saturated)."
+  ]
+}

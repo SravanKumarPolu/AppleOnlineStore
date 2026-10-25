@@ -1,0 +1,294 @@
+#!/usr/bin/env node
+// Phase 6 — Load / performance test harness for NovaCart backend.
+//
+// Runs controlled load scenarios (1 → 10 → 50 → 100 → 250 concurrent virtual
+// users) against a REAL backend instance (e2e-server.mjs boots the app with
+// an in-memory MongoDB + seeded products). Uses Node's built-in http module —
+// no new dependencies.
+//
+// Safety: stress levels run only if the previous level stayed healthy
+// (error rate < 5%, p95 < 3000 ms). Extreme load (500) is intentionally NOT
+// executed on this 2-CPU / 4 GB sandbox — documented in the report.
+//
+// Usage: node scripts/load-test.mjs [--max-vu 250] [--duration 15]
+import http from 'node:http';
+import { spawn, execSync } from 'node:child_process';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+// Repo-relative paths (previously hardcoded to one author's absolute
+// checkout path, breaking every other machine).
+const HERE = dirname(fileURLToPath(import.meta.url));
+const BACKEND_DIR = join(HERE, '..');
+const REPO_ROOT = join(BACKEND_DIR, '..');
+const BASE = process.env.LOAD_TEST_BASE || 'http://localhost:3001';
+const OUT = process.env.LOAD_TEST_OUT || join(REPO_ROOT, 'docs', 'testing', 'load-results.json');
+
+const args = process.argv.slice(2);
+const argOf = (name, def) => {
+  const i = args.indexOf(`--${name}`);
+  return i !== -1 ? Number(args[i + 1]) : def;
+};
+const MAX_VU = argOf('max-vu', 250);
+const DURATION = argOf('duration', 15); // seconds per level
+
+// ---------------- helpers ----------------
+function requestOnce(path, { method = 'GET', body = null, token = null } = {}) {
+  return new Promise((resolve) => {
+    const start = process.hrtime.bigint();
+    const payload = body ? JSON.stringify(body) : null;
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers.token = token;
+    if (payload) headers['Content-Length'] = Buffer.byteLength(payload);
+    const req = http.request(
+      `${BASE}${path}`,
+      { method, headers, timeout: 20000 },
+      (res) => {
+        res.resume();
+        res.on('end', () => {
+          const ms = Number(process.hrtime.bigint() - start) / 1e6;
+          resolve({ status: res.statusCode, ms });
+        });
+      }
+    );
+    req.on('error', () => resolve({ status: 0, ms: Number(process.hrtime.bigint() - start) / 1e6 }));
+    req.on('timeout', () => { req.destroy(); resolve({ status: 0, ms: 20000 }); });
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+async function waitFor(url, timeoutMs = 60000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const r = await requestOnce(url);
+      if (r.status === 200) return true;
+    } catch { /* retry */ }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return false;
+}
+
+function percentile(sorted, p) {
+  if (!sorted.length) return 0;
+  const idx = Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1);
+  return sorted[Math.max(0, idx)];
+}
+
+function procStats(pid) {
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8').split(' ');
+    const utime = Number(stat[13]) + Number(stat[14]); // ticks (100/s)
+    const mem = fs.readFileSync(`/proc/${pid}/status`, 'utf8');
+    const rss = Number((mem.match(/VmRSS:\s+(\d+) kB/) || [0, 0])[1]);
+    return { cpuTicks: utime, rssKb: rss };
+  } catch { return { cpuTicks: 0, rssKb: 0 }; }
+}
+
+// Runs `vu` concurrent workers, each looping scenario requests for DURATION s.
+async function runLevel(level, vu, scenarios, tokens) {
+  const stop = Date.now() + DURATION * 1000;
+  const results = [];
+  const workers = Array.from({ length: vu }, async (_, workerId) => {
+    while (Date.now() < stop) {
+      const sc = scenarios[workerId % scenarios.length];
+      const token = sc.auth === 'user' ? tokens.user : sc.auth === 'admin' ? tokens.admin : null;
+      const r = await requestOnce(sc.path, {
+        method: sc.method,
+        body: sc.body ? { ...sc.body } : null,
+        token,
+      });
+      results.push({ name: sc.name, status: r.status, ms: r.ms });
+    }
+  });
+  await Promise.all(workers);
+
+  const wall = DURATION;
+  const latencies = results.map((r) => r.ms).sort((a, b) => a - b);
+  const errors = results.filter((r) => r.status === 0 || r.status >= 500).length;
+  const perScenario = {};
+  for (const name of new Set(results.map((r) => r.name))) {
+    const rs = results.filter((r) => r.name === name);
+    const lats = rs.map((r) => r.ms).sort((a, b) => a - b);
+    perScenario[name] = {
+      count: rs.length,
+      rps: +(rs.length / wall).toFixed(1),
+      avg_ms: +(lats.reduce((a, b) => a + b, 0) / lats.length).toFixed(1),
+      p50_ms: +percentile(lats, 50).toFixed(1),
+      p95_ms: +percentile(lats, 95).toFixed(1),
+      p99_ms: +percentile(lats, 99).toFixed(1),
+      max_ms: +lats[lats.length - 1].toFixed(1),
+      errors: rs.filter((r) => r.status === 0 || r.status >= 500).length,
+    };
+  }
+  return {
+    level,
+    vu,
+    duration_s: wall,
+    total_requests: results.length,
+    throughput_rps: +(results.length / wall).toFixed(1),
+    error_rate: +((errors / Math.max(1, results.length)) * 100).toFixed(2),
+    latency: {
+      avg_ms: +(latencies.reduce((a, b) => a + b, 0) / Math.max(1, latencies.length)).toFixed(1),
+      p50_ms: +percentile(latencies, 50).toFixed(1),
+      p95_ms: +percentile(latencies, 95).toFixed(1),
+      p99_ms: +percentile(latencies, 99).toFixed(1),
+    },
+    scenarios: perScenario,
+  };
+}
+
+// ---------------- main ----------------
+async function main() {
+  console.log('=== NovaCart Load Test Harness ===');
+  console.log(`Levels: 1, 10, 50, 100, ${MAX_VU} VUs | ${DURATION}s each | stop-if: err>5% or p95>3000ms`);
+
+  // 1. Boot the backend (in-memory Mongo + seeds + real server.js).
+  console.log('\n[1/4] Booting backend via e2e-server.mjs ...');
+  const server = spawn('node', ['scripts/e2e-server.mjs'], {
+    cwd: BACKEND_DIR,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env },
+  });
+  let serverLogs = '';
+  server.stdout.on('data', (d) => (serverLogs += d));
+  server.stderr.on('data', (d) => (serverLogs += d));
+
+  const ready = await waitFor('/health/ready', 90000);
+  if (!ready) {
+    console.error('Backend failed to become ready:\n', serverLogs.slice(-2000));
+    server.kill('SIGKILL');
+    process.exit(1);
+  }
+  const serverPid = execSync('pgrep -f "node server.js" | head -1').toString().trim();
+  console.log(`Backend ready (pid ${serverPid}).`);
+
+  // 2. Prepare tokens + product id from the seed.
+  const adminLogin = await requestOnce('/api/user/admin', {
+    method: 'POST',
+    body: { email: 'e2e-admin@example.com', password: 'e2e-admin-password-1' },
+  });
+  // Re-do with response body capture (need the token text):
+  const adminToken = await new Promise((resolve) => {
+    const payload = JSON.stringify({ email: 'e2e-admin@example.com', password: 'e2e-admin-password-1' });
+    const req = http.request(`${BASE}/api/user/admin`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+    }, (res) => {
+      let data = '';
+      res.on('data', (c) => (data += c));
+      res.on('end', () => { try { resolve(JSON.parse(data).token); } catch { resolve(null); } });
+    });
+    req.on('error', () => resolve(null));
+    req.write(payload);
+    req.end();
+  });
+
+  // Register a shopper for authenticated scenarios.
+  const userEmail = `load-${Date.now()}@example.com`;
+  const register = await new Promise((resolve) => {
+    const payload = JSON.stringify({ name: 'Load Tester', email: userEmail, password: 'Load!Test123' });
+    const req = http.request(`${BASE}/api/user/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+    }, (res) => {
+      let data = '';
+      res.on('data', (c) => (data += c));
+      res.on('end', () => { try { resolve(JSON.parse(data)); } catch { resolve({}); } });
+    });
+    req.on('error', () => resolve({}));
+    req.write(payload);
+    req.end();
+  });
+
+  // Find a seeded product id via the public listing.
+  const listBody = await new Promise((resolve) => {
+    http.get(`${BASE}/api/product/list?limit=10`, (res) => {
+      let data = '';
+      res.on('data', (c) => (data += c));
+      res.on('end', () => { try { resolve(JSON.parse(data)); } catch { resolve({}); } });
+    }).on('error', () => resolve({}));
+  });
+  const product = (listBody.products || [])[0];
+  if (!product || !adminToken || !register.token) {
+    console.error('Fixture preparation failed:', { product: !!product, adminToken: !!adminToken, register: !!register.token });
+    server.kill('SIGKILL');
+    process.exit(1);
+  }
+  const tokens = { user: register.token, admin: adminToken };
+  console.log('[2/4] Fixtures ready (shopper token, admin token, product).');
+
+  // 3. Scenario mix (read-heavy like a real storefront + authenticated paths).
+  const scenarios = [
+    { name: 'GET /health/ready', path: '/health/ready' },
+    { name: 'GET /api/product/list', path: '/api/product/list?page=1&limit=12' },
+    { name: 'GET /api/product/list?search', path: '/api/product/list?page=1&limit=12&search=iPhone' },
+    { name: 'POST /api/product/single', path: '/api/product/single', method: 'POST', body: { productId: String(product._id) } },
+    { name: 'GET /api/category/list', path: '/api/category/list' },
+    { name: 'POST /api/orders/userorders (auth)', path: '/api/orders/userorders', method: 'POST', body: {}, auth: 'user' },
+    { name: 'POST /api/cart/get (auth)', path: '/api/cart/get', method: 'POST', body: {}, auth: 'user' },
+    { name: 'GET /api/orders/all (admin)', path: '/api/orders/all', auth: 'admin' },
+  ];
+
+  // 4. Run levels with escalation guard + resource sampling.
+  console.log('[3/4] Running load levels ...');
+  const levelsOut = [];
+  const resourceSamples = [];
+  const LEVELS = [1, 10, 50, 100, MAX_VU].filter((v, i, a) => a.indexOf(v) === i && v <= MAX_VU);
+
+  for (const vu of LEVELS) {
+    const before = procStats(serverPid);
+    const t0 = Date.now();
+    const res = await runLevel(`VU=${vu}`, vu, scenarios, tokens);
+    const after = procStats(serverPid);
+    const cpuPct = +(((after.cpuTicks - before.cpuTicks) / ((Date.now() - t0) / 1000)) ).toFixed(1); // ticks are 1/100s → % of one core
+    Object.assign(res, {
+      server_cpu_pct_one_core: cpuPct,
+      server_rss_mb: +(after.rssKb / 1024).toFixed(1),
+    });
+    resourceSamples.push({ vu, rss_mb: res.server_rss_mb, cpu_pct: cpuPct });
+    levelsOut.push(res);
+    console.log(
+      `  VU=${String(vu).padStart(3)} → ${res.total_requests} req | ${res.throughput_rps} rps | ` +
+      `avg ${res.latency.avg_ms}ms | p50 ${res.latency.p50_ms} | p95 ${res.latency.p95_ms} | ` +
+      `p99 ${res.latency.p99_ms} | err ${res.error_rate}% | rss ${res.server_rss_mb}MB | cpu ${cpuPct}%`
+    );
+
+    // Escalation guard.
+    if (res.error_rate > 5) { console.log('  ⛔ stopping: error rate > 5%'); break; }
+    if (res.latency.p95_ms > 3000) { console.log('  ⛔ stopping: p95 > 3000ms'); break; }
+    if (res.server_rss_mb > 2500) { console.log('  ⛔ stopping: RSS > 2.5GB safety limit'); break; }
+    await new Promise((r) => setTimeout(r, 3000)); // cool-down between levels
+  }
+
+  // 5. Recovery check: after peak load, does the server still respond fast?
+  console.log('[4/4] Post-load recovery check ...');
+  await new Promise((r) => setTimeout(r, 3000));
+  const recovery = [];
+  for (let i = 0; i < 5; i++) recovery.push(await requestOnce('/health/ready'));
+  const recoveryAvg = +(recovery.reduce((a, b) => a + b.ms, 0) / recovery.length).toFixed(1);
+  const recoveryOk = recovery.every((r) => r.status === 200);
+  console.log(`  Recovery: /health/ready avg ${recoveryAvg}ms, all-200=${recoveryOk}`);
+
+  server.kill('SIGTERM');
+  const summary = {
+    generated_at: new Date().toISOString(),
+    environment: 'isolated sandbox — 2 vCPU, 4 GB RAM, in-memory MongoDB, Node 24',
+    duration_per_level_s: DURATION,
+    levels: levelsOut,
+    recovery: { health_ready_avg_ms: recoveryAvg, all_200: recoveryOk },
+    notes: [
+      'Extreme load (500 VU) intentionally NOT executed: sandbox has 2 vCPU/4GB shared with the test harness itself.',
+      'Write-heavy order placement excluded from the mix to avoid exhausting seeded stock; read/auth paths dominate a real storefront traffic profile.',
+      'CPU percent is relative to ONE core (200% = both cores saturated).',
+    ],
+  };
+  fs.mkdirSync(OUT.replace('/load-results.json', ''), { recursive: true });
+  fs.writeFileSync(OUT, JSON.stringify(summary, null, 2));
+  console.log(`\nResults written to ${OUT}`);
+  process.exit(0);
+}
+
+main().catch((e) => { console.error(e); process.exit(1); });

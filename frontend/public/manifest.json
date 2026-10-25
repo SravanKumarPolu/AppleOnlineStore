@@ -1,0 +1,83 @@
+{
+  "name": "SKR E-Commerce - Modern Shopping Experience",
+  "short_name": "SKR Store",
+  "description": "A modern e-commerce platform for seamless shopping experience with PWA support.",
+  "start_url": "/?source=pwa",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#ffffff",
+  "theme_color": "#3b82f6",
+  "scope": "/",
+  "lang": "en",
+  "dir": "ltr",
+  "icons": [
+    {
+      "src": "/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    },
+    {
+      "src": "/favicon-32x32.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "/favicon-16x16.png",
+      "sizes": "16x16",
+      "type": "image/png"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Shop Products",
+      "short_name": "Shop",
+      "description": "Browse the full product collection",
+      "url": "/collection",
+      "icons": [{ "src": "/pwa-192x192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "View Cart",
+      "short_name": "Cart",
+      "description": "View your current shopping cart",
+      "url": "/cart",
+      "icons": [{ "src": "/pwa-192x192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "My Profile",
+      "short_name": "Profile",
+      "description": "Access your profile and orders",
+      "url": "/profile",
+      "icons": [{ "src": "/pwa-192x192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/screenshot-wide.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "SKR Store - Web Homepage"
+    },
+    {
+      "src": "/screenshot-narrow.png",
+      "sizes": "750x1334",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "SKR Store - Mobile Experience"
+    }
+  ],
+  "prefer_related_applications": false,
+  "related_applications": []
+}

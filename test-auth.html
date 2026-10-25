@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Authentication Test</title>
+</head>
+<body>
+    <h1>Manual Authentication Test Steps</h1>
+    
+    <h2>🧪 Test Scenarios</h2>
+    
+    <h3>1. Test Unauthenticated User</h3>
+    <ol>
+        <li>Open frontend in incognito mode</li>
+        <li>Go to any product page</li>
+        <li>Try to select a color and click "Add to Cart"</li>
+        <li>✅ Expected: Should show "Please login" message and redirect to login</li>
+        <li>✅ Expected: Should NOT add item to cart</li>
+    </ol>
+    
+    <h3>2. Test Cart Access Without Login</h3>
+    <ol>
+        <li>While not logged in, go to /cart</li>
+        <li>✅ Expected: Should redirect to login page</li>
+        <li>✅ Expected: Should show "Please Login" message</li>
+    </ol>
+    
+    <h3>3. Test Authentication Flow</h3>
+    <ol>
+        <li>Go to login page</li>
+        <li>Create a new account or login</li>
+        <li>✅ Expected: Should redirect to home page</li>
+        <li>✅ Expected: Navbar should show profile dropdown</li>
+    </ol>
+    
+    <h3>4. Test Add to Cart After Login</h3>
+    <ol>
+        <li>After logging in, go to a product page</li>
+        <li>Select a color and click "Add to Cart"</li>
+        <li>✅ Expected: Should add item to cart successfully</li>
+        <li>✅ Expected: Should show "Item added to cart" message</li>
+        <li>✅ Expected: Cart count should increase</li>
+    </ol>
+    
+    <h3>5. Test Logout</h3>
+    <ol>
+        <li>Click profile dropdown and logout</li>
+        <li>✅ Expected: Should clear cart and redirect to login required state</li>
+        <li>Try to access cart page</li>
+        <li>✅ Expected: Should redirect to login</li>
+    </ol>
+    
+    <h2>🔍 Debug Console Commands</h2>
+    <pre>
+// Check authentication state
+localStorage.getItem('token')
+
+// Check if context is working
+window.shopContext = React.useContext(ShopContext)
+
+// Monitor cart additions
+console.log('Cart items:', cartItems)
+    </pre>
+    
+    <h2>📱 Browser Developer Tools</h2>
+    <p>Open browser console and watch for these log messages:</p>
+    <ul>
+        <li>🛒 addToCart called: {...}</li>
+        <li>🚫 Authentication failed - redirecting to login</li>
+        <li>✅ Authentication passed - adding to cart</li>
+        <li>🔒 Handle Add to Cart clicked: {...}</li>
+        <li>📦 Cart data: [...]</li>
+    </ul>
+</body>
+</html>
