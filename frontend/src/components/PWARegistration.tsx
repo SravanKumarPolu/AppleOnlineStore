@@ -11,7 +11,7 @@ const PWARegistration = () => {
           <p className="text-sm">A new version of NovaCart is ready to install.</p>
           <button
             onClick={() => window.location.reload()}
-            className="mt-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 transition-colors"
+            className="mt-2 px-4 py-2 bg-green-700 text-white rounded-lg text-sm hover:bg-green-800 transition-colors"
           >
             Update Now
           </button>

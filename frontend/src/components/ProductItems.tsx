@@ -22,7 +22,8 @@ const ProductItems: React.FC<ProductItemsProps> = ({ id, image, name, price, bes
     <Link
       to={`/product/${id}`}
       className="group block focus:outline-none h-full w-full"
-      aria-label={`View details for ${name}`}
+      // No aria-label: the card content (name/price) is the accessible name.
+      // An overriding label that omitted the visible text failed WCAG 2.5.3.
     >
       <motion.div 
         className="card-product group"
@@ -161,7 +162,7 @@ const ProductItems: React.FC<ProductItemsProps> = ({ id, image, name, price, bes
           {/* Enhanced Stock status */}
           <div className="flex items-center gap-2 text-sm">
             <div className="status-indicator status-in-stock"></div>
-            <span className="text-green-600 font-medium">In Stock</span>
+            <span className="text-green-700 font-medium">In Stock</span>
             <span className="text-gray-500">• Free Shipping</span>
           </div>
         </div>

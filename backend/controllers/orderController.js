@@ -10,6 +10,7 @@ import { redactError } from '../utils/redact.js';
 import { getActiveWebhookVerifier } from '../services/paypalWebhookService.js';
 import { createPayPalEnvironment } from '../config/paypalEnv.js';
 import { UserActivity, ProductPerformance } from '../models/analyticsModel.js';
+import { reservationExpiryFrom, restoreReservedStock } from '../services/reservationService.js';
 
 dotenv.config();
 
@@ -400,6 +401,15 @@ const placeOrderPayPal = async (req, res) => {
     // Create PayPal order with STRICT USD configuration
     const request = new paypal.orders.OrdersCreateRequest();
     request.prefer("return=representation");
+
+    // Payee is optional and environment-driven. When unset the `payee` field
+    // is omitted entirely, so PayPal routes the payment to the account that
+    // owns the API credentials — the correct default. The previous hardcoded
+    // sandbox address (sb-business@business.example.com) was applied to EVERY
+    // deployment, including a live one, which would have sent real payments to
+    // a test account. config/startupValidation.js rejects example.com payees
+    // when PAYPAL_ENV=live.
+    const payeeEmail = String(process.env.PAYPAL_PAYEE_EMAIL || '').trim();
     
     // Force US address for maximum PayPal compatibility
     const paypalShippingAddress = {
@@ -410,39 +420,41 @@ const placeOrderPayPal = async (req, res) => {
       country_code: 'US' // ALWAYS US for PayPal sandbox
     };
     
+    const purchaseUnit = {
+      amount: {
+        currency_code: 'USD', // STRICT USD ONLY
+        value: total.toFixed(2),
+        breakdown: {
+          item_total: {
+            currency_code: 'USD',
+            value: subtotal.toFixed(2)
+          },
+          shipping: {
+            currency_code: 'USD',
+            value: shipping.toFixed(2)
+          }
+        }
+      },
+      items: pricedItems.map(item => ({
+        name: item.name,
+        unit_amount: {
+          currency_code: 'USD', // STRICT USD ONLY
+          value: item.price.toFixed(2)
+        },
+        quantity: item.quantity.toString(),
+        category: 'PHYSICAL_GOODS'
+      })),
+      shipping: {
+        address: paypalShippingAddress
+      }
+    };
+    if (payeeEmail) {
+      purchaseUnit.payee = { email_address: payeeEmail };
+    }
+
     request.requestBody({
       intent: 'CAPTURE',
-      purchase_units: [{
-        amount: {
-          currency_code: 'USD', // STRICT USD ONLY
-          value: total.toFixed(2),
-          breakdown: {
-            item_total: {
-              currency_code: 'USD',
-              value: subtotal.toFixed(2)
-            },
-            shipping: {
-              currency_code: 'USD',
-              value: shipping.toFixed(2)
-            }
-          }
-        },
-        items: pricedItems.map(item => ({
-          name: item.name,
-          unit_amount: {
-            currency_code: 'USD', // STRICT USD ONLY
-            value: item.price.toFixed(2)
-          },
-          quantity: item.quantity.toString(),
-          category: 'PHYSICAL_GOODS'
-        })),
-        shipping: {
-          address: paypalShippingAddress
-        },
-        payee: {
-          email_address: 'sb-business@business.example.com' // PayPal sandbox business account
-        }
-      }],
+      purchase_units: [purchaseUnit],
       application_context: {
         return_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/payment/success`,
         cancel_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/payment/cancel`,
@@ -454,7 +466,9 @@ const placeOrderPayPal = async (req, res) => {
         shipping_preference: 'SET_PROVIDED_ADDRESS',
         locale: 'en-US', // Force US locale
         landing_page: 'LOGIN', // Force login page
-        brand_name: 'E-commerce Store'
+        // Brand shown on the PayPal checkout page — configured, not hardcoded
+        // (the old literal was a legacy product name).
+        brand_name: process.env.APP_NAME || 'NovaCart'
       }
     });
 
@@ -496,7 +510,10 @@ const placeOrderPayPal = async (req, res) => {
       paypalOrderId: order.result.id,
       paymentStatus: 'pending',
       orderStatus: 'Order Placed',
-      stockReserved: true
+      stockReserved: true,
+      // Abandoned PayPal windows release their hold after this timestamp
+      // (services/reservationService.js).
+      reservationExpiresAt: reservationExpiryFrom()
     };
 
     const dbOrder = new orderModel(orderData);
@@ -805,6 +822,7 @@ const WEBHOOK_RESULTS = {
   AMOUNT_CURRENCY_MISMATCH: 'amount_currency_mismatch',
   CAPTURE_ORDER_MISMATCH: 'capture_order_mismatch',
   IGNORED_EVENT_TYPE: 'ignored_event_type',
+  CAPTURE_AFTER_CANCELLATION: 'capture_after_cancellation',
 };
 
 function getWebhookProcessingLockMs() {
@@ -933,6 +951,33 @@ async function processCaptureCompletedEvent(event, record) {
   }
 
   if (order) {
+    // An order that was cancelled (by an admin, or by the reservation-expiry
+    // sweep) has already had its stock returned. A capture that arrives
+    // afterwards means the shopper paid for an order the store no longer
+    // holds stock for: never flip it back to 'completed' silently — that
+    // would double-sell the item. Acknowledge (retrying cannot fix it) and
+    // raise an ops alert for a manual refund/re-ship decision.
+    if (order.orderStatus === 'Cancelled') {
+      return {
+        unresolved: true,
+        httpStatus: 200,
+        success: true,
+        message: 'Order was cancelled before this capture; flagged for manual reconciliation',
+        result: WEBHOOK_RESULTS.CAPTURE_AFTER_CANCELLATION,
+        note: `capture ${captureId} arrived for cancelled order ${order._id}`,
+        alert: {
+          reason: 'capture_after_cancellation',
+          details: {
+            eventId: event.id,
+            captureId,
+            orderDbId: order._id,
+            paypalOrderId: order.paypalOrderId,
+            paymentStatus: order.paymentStatus,
+          },
+        },
+      };
+    }
+
     // Verify amount + currency against the expected payment BEFORE any write.
     const orderCents = Math.round(order.total * 100);
     if (eventCurrency !== order.currency.toUpperCase() || eventCents !== orderCents) {
@@ -1182,6 +1227,159 @@ const handlePayPalWebhook = async (req, res) => {
       redactError(error)
     );
     res.status(500).json({ success: false, message: 'Webhook processing failed' });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Refunds (POST /api/orders/refund, admin only)
+//
+// Two very different realities behind one admin action:
+//   - PayPal orders carry a capture id: the money is returned through the
+//     PayPal Refunds API, and only a COMPLETED/PENDING refund marks the order.
+//   - COD / Card orders were never charged by us: the store returns the money
+//     out-of-band, so the endpoint records the refund (method "manual").
+//
+// In both cases inventory is restored exactly once (same `stockReserved`
+// claim the admin-cancel path uses) and the change is broadcast to the shopper
+// and the admin room. Repeating the call is idempotent.
+// ---------------------------------------------------------------------------
+const refundOrder = async (req, res) => {
+  try {
+    const { orderId, reason } = req.body || {};
+
+    if (!orderId) {
+      return res.status(400).json({ success: false, message: 'Order ID is required' });
+    }
+    if (!isValidObjectId(orderId)) {
+      return res.status(400).json({ success: false, message: 'Invalid order ID format' });
+    }
+
+    const order = await orderModel.findById(orderId);
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    // Idempotent: a repeated admin action must not refund twice.
+    if (order.paymentStatus === 'refunded') {
+      return res.json({
+        success: true,
+        message: 'Order was already refunded',
+        alreadyRefunded: true,
+        order: order.toJSON(),
+      });
+    }
+
+    if (order.paymentStatus !== 'completed') {
+      return res.status(400).json({
+        success: false,
+        message: `Only a completed payment can be refunded (current status: ${order.paymentStatus})`,
+      });
+    }
+
+    if (reason !== undefined && typeof reason !== 'string') {
+      return res.status(400).json({ success: false, message: 'Refund reason must be a string' });
+    }
+    const refundReason = typeof reason === 'string' ? reason.trim().slice(0, 200) : null;
+
+    // 1) Gateway refund (PayPal only — the only integrated gateway).
+    let refundId = null;
+    let refundMethod = 'manual';
+
+    if (order.paymentMethod === 'PayPal') {
+      if (!order.paypalCaptureId) {
+        // A completed PayPal order without a capture id cannot be refunded
+        // automatically; fail closed instead of pretending it worked.
+        return res.status(409).json({
+          success: false,
+          message: 'Order has no PayPal capture id; refund it in the PayPal dashboard',
+        });
+      }
+
+      const request = new paypal.payments.CapturesRefundRequest(order.paypalCaptureId);
+      request.requestBody({
+        amount: { value: order.total.toFixed(2), currency_code: order.currency },
+        ...(refundReason ? { note_to_payer: refundReason } : {}),
+      });
+
+      let refund;
+      try {
+        refund = await getPayPalClient().execute(request);
+      } catch (gatewayError) {
+        console.error('❌ PayPal refund failed:', redactError(gatewayError));
+        return res.status(502).json({
+          success: false,
+          message: 'PayPal refund failed; the order was left unchanged',
+          error: 'PAYPAL_REFUND_ERROR',
+        });
+      }
+
+      const status = refund?.result?.status;
+      if (!refund?.result?.id || !['COMPLETED', 'PENDING'].includes(status)) {
+        console.error('❌ Unexpected PayPal refund response status:', status);
+        return res.status(502).json({
+          success: false,
+          message: 'PayPal did not confirm the refund; the order was left unchanged',
+          error: 'PAYPAL_REFUND_UNCONFIRMED',
+        });
+      }
+
+      refundId = refund.result.id;
+      refundMethod = 'paypal';
+    }
+
+    // 2) Mark the order refunded. The filter re-checks the status so a
+    //    concurrent refund/cancel cannot double-apply.
+    const updated = await orderModel.findOneAndUpdate(
+      { _id: order._id, paymentStatus: 'completed' },
+      {
+        $set: {
+          paymentStatus: 'refunded',
+          refundedAt: new Date(),
+          refundId,
+          refundMethod,
+          refundReason,
+        },
+      },
+      { new: true }
+    );
+
+    if (!updated) {
+      return res.status(409).json({
+        success: false,
+        message: 'Order changed while the refund was being processed; refresh and retry',
+      });
+    }
+
+    // 3) Return the reserved units exactly once (cancellation and refund share
+    //    the same claim, so the two can never double-restore).
+    const claimed = await orderModel.findOneAndUpdate(
+      { _id: order._id, stockReserved: true },
+      { $set: { stockReserved: false } },
+      { new: true }
+    );
+    if (claimed) {
+      await restoreReservedStock(claimed.items);
+    }
+
+    // 4) Tell both sides (shopper's personal room + admin room).
+    try {
+      const withUser = await orderModel.findById(order._id).populate('userId', 'name email');
+      if (withUser) {
+        socketService.sendPaymentStatusUpdate(withUser.toJSON());
+      }
+    } catch (notifyError) {
+      console.error('Refund notification failed:', redactError(notifyError));
+    }
+
+    res.json({
+      success: true,
+      message: refundMethod === 'paypal' ? 'Refund issued through PayPal' : 'Refund recorded (manual)',
+      order: updated.toJSON(),
+      refund: { id: refundId, method: refundMethod, amount: updated.total, currency: updated.currency },
+    });
+  } catch (error) {
+    console.error('Refund error:', redactError(error));
+    res.status(500).json({ success: false, message: 'Server error' });
   }
 };
 
@@ -1532,7 +1730,8 @@ export {
   placeOrderPayPal,
   capturePayPalPayment,
   handlePayPalWebhook,
-  updateStatus, 
+  updateStatus,
+  refundOrder, 
   userOrders, 
   allOrders,
   debugOrders

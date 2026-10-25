@@ -58,7 +58,7 @@ const PerformanceMonitor = () => {
   if (!import.meta.env.DEV || !isVisible || !metrics) return null;
 
   const getPerformanceColor = (value: number, threshold: number) => {
-    if (value <= threshold) return 'text-green-600';
+    if (value <= threshold) return 'text-green-700';
     if (value <= threshold * 1.5) return 'text-yellow-600';
     return 'text-red-600';
   };
@@ -75,7 +75,8 @@ const PerformanceMonitor = () => {
           <h3 className="text-sm font-semibold text-gray-800">Performance Monitor</h3>
           <button
             onClick={() => setIsVisible(false)}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
+            className="text-gray-500 hover:text-gray-700 transition-colors"
+            aria-label="Close performance panel"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />

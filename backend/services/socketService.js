@@ -160,12 +160,17 @@ class SocketService {
   }
 
   // Send order update to specific user
+  //
+  // Delivery goes through the user's PERSONAL ROOM (`user_<id>`), which every
+  // tab/device joins on connect. The previous implementation looked the id up
+  // in `connectedUsers` with the raw value from the request (`req.user.id` is
+  // an ObjectId) while the map is keyed by `String(user._id)` — the lookup
+  // always missed, so shoppers silently never received `order_updated`. Rooms
+  // also survive reconnects and fan out to multiple sessions, which the
+  // single-socket map could not.
   sendOrderUpdateToUser(userId, orderData) {
-    const socketId = this.connectedUsers.get(userId);
-    if (socketId) {
-      this.#emitToSocketId(socketId, 'order_updated', orderData);
-      console.log(`📦 Order update sent to user ${userId}`);
-    }
+    if (!userId) return;
+    this.#emitToRoom(`user_${String(userId)}`, 'order_updated', orderData);
   }
 
   // Send order update to order room (for real-time collaboration)

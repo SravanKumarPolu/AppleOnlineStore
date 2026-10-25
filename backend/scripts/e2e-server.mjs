@@ -20,6 +20,9 @@ const PORT = process.env.E2E_PORT || '3001';
 // URI has no database component — the in-memory URI passed below is a bare
 // host URI, so seeding must target the same resolved database.
 const DB_NAME = 'e-commerce';
+// Load runs need a deep inventory for the checkout-write scenario; the browser
+// E2E suite keeps the realistic small numbers.
+const STOCK = Number(process.env.E2E_STOCK || 10) || 10;
 const readyUrl = `http://localhost:${PORT}/health/ready`;
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -51,7 +54,7 @@ async function seedCatalog(uri) {
         color: ['Black', 'Silver'],
         bestseller: true,
         date: Date.now() + 3000,
-        stockQuantity: 10,
+        stockQuantity: STOCK,
         inStock: true,
       },
       {
@@ -64,7 +67,7 @@ async function seedCatalog(uri) {
         color: ['Silver'],
         bestseller: true,
         date: Date.now() + 2000,
-        stockQuantity: 6,
+        stockQuantity: STOCK,
         inStock: true,
       },
       {
@@ -77,7 +80,7 @@ async function seedCatalog(uri) {
         color: ['White'],
         bestseller: false,
         date: Date.now() + 1000,
-        stockQuantity: 15,
+        stockQuantity: STOCK,
         inStock: true,
       },
     ]);

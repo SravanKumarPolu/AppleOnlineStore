@@ -432,6 +432,7 @@ const Collection = () => {
                   </motion.button>
                   
                   <select
+                    aria-label="Sort products"
                     onChange={(e) => setSortType(e.target.value)}
                     value={sortType}
                     className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm bg-white shadow-sm"

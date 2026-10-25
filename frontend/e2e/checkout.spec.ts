@@ -95,9 +95,9 @@ test('COD checkout in a real browser creates a real order', async ({ page }) => 
 
   // --- 2. Catalog: the seeded bestseller is browsable on the home page ---
   await page.goto('/');
-  const productCard = page.getByRole('link', {
-    name: `View details for ${PRODUCT_NAME}`,
-  });
+  // Cards no longer set an aria-label (WCAG 2.5.3 label-in-name), so the
+  // link's accessible name is its content — match the product name inside it.
+  const productCard = page.getByRole('link', { name: new RegExp(PRODUCT_NAME) });
   await expect(productCard.first()).toBeVisible();
   await productCard.first().click();
 
@@ -151,7 +151,7 @@ test('Card checkout in a real browser also creates a real (pending) order', asyn
 
   await page.goto('/');
   await page
-    .getByRole('link', { name: 'View details for MacBook Air E2E' })
+    .getByRole('link', { name: /MacBook Air E2E/ })
     .first()
     .click();
   await page.getByRole('button', { name: 'Silver', exact: true }).click();

@@ -58,7 +58,7 @@ test('unknown route shows the NotFound page (no blank screen, no crash)', async 
 test('product detail loads with images, and related products render', async ({ page }) => {
   await page.goto('/', { waitUntil: 'networkidle' });
   await page
-    .getByRole('link', { name: `View details for ${PRODUCT_NAME}` })
+    .getByRole('link', { name: new RegExp(PRODUCT_NAME) })
     .first()
     .click();
   await expect(page).toHaveURL(/\/product\//);
@@ -90,7 +90,7 @@ test('collection page search and category filter work', async ({ page }) => {
   if (await search.isVisible().catch(() => false)) {
     await search.fill('iPhone');
     await page.waitForTimeout(800); // debounce
-    const cards = page.getByRole('link', /View details for/);
+    const cards = page.locator('a[href^="/product/"]');
     const count = await cards.count();
     expect(count).toBeGreaterThan(0);
     for (let i = 0; i < Math.min(count, 5); i++) {

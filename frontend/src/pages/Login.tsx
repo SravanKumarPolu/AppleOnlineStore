@@ -536,6 +536,7 @@ const Login = () => {
                       type="button"
                       className="absolute inset-y-0 right-0 pr-5 flex items-center hover:bg-gray-50/50 rounded-r-2xl transition-all duration-300 btn-press"
                       onClick={() => setShowPassword(!showPassword)}
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
                     >
                       <EyeIcon 
                         size="lg" 
@@ -627,7 +628,7 @@ const Login = () => {
                   type="button"
                   onClick={handleBiometricAuth}
                   className="w-full py-4 lg:py-5 px-6 bg-gradient-to-r from-gray-600 to-gray-700 text-white rounded-2xl hover:from-gray-700 hover:to-gray-800 transition-all duration-300 flex items-center justify-center space-x-3 font-medium shadow-lg hover:shadow-xl text-sm lg:text-base transform hover:scale-[1.02] active:scale-[0.98]"
-                  aria-label="Sign in with biometric authentication"
+                  aria-label="Sign in with Biometrics (biometric authentication)"
                 >
                   <ShieldIcon 
                     size="md" 
@@ -653,7 +654,7 @@ const Login = () => {
                     type="button"
                     onClick={() => setCurrentState(currentState === "Login" ? "Sign Up" : "Login")}
                     className="text-gray-600 hover:text-indigo-600 font-medium transition-all duration-300 hover:underline text-left sm:text-right"
-                    aria-label={`Switch to ${currentState === "Login" ? "Sign Up" : "Login"} mode`}
+                    aria-label={`${currentState === "Login" ? "Create account" : "Sign in instead"} (switch to ${currentState === "Login" ? "Sign Up" : "Login"} mode)`}
                   >
                     {currentState === "Login" ? "Create account" : "Sign in instead"}
                   </button>

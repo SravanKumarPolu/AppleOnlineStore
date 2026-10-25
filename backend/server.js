@@ -18,8 +18,14 @@ import { validateRuntimeConfig, formatStartupConfigReport } from './config/start
 import socketService from './services/socketService.js';
 import { createShutdownManager } from './utils/shutdownManager.js';
 import { redactError } from './utils/redact.js';
+import {
+  startReservationSweeper,
+  releaseExpiredReservations,
+  DEFAULT_SWEEP_INTERVAL_MS,
+} from './services/reservationService.js';
 
 const server = createServer(app);
+let stopReservationSweeper = null;
 const PORT = process.env.PORT || 3001;
 
 // ---------------------------------------------------------------------------
@@ -42,6 +48,10 @@ const shutdownManager = createShutdownManager({
   server,
   onDrain: setShuttingDown,
   closeSockets: async () => {
+    if (stopReservationSweeper) {
+      stopReservationSweeper();
+      stopReservationSweeper = null;
+    }
     if (typeof socketService.close === 'function') {
       await socketService.close();
     }
@@ -101,6 +111,16 @@ async function startServer() {
     }
 
     await connectDB();          // required: fail-fast if unreachable
+
+    // Release inventory held by abandoned PayPal checkouts. One sweep at boot
+    // (so a restart heals stale holds) and then on an interval. The timer is
+    // unref'd; the stop handle is registered for graceful shutdown below.
+    await releaseExpiredReservations().catch((error) => {
+      console.error('Startup reservation sweep failed:', redactError(error));
+    });
+    stopReservationSweeper = startReservationSweeper({
+      intervalMs: Number(process.env.RESERVATION_SWEEP_INTERVAL_MS) || DEFAULT_SWEEP_INTERVAL_MS,
+    });
     await connectCloudinary();  // config-only call, kept after DB per original order
     socketService.initialize(server);
 

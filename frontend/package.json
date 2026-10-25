@@ -34,6 +34,7 @@
     "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
     "@eslint/js": "^9.17.0",
     "@playwright/test": "^1.64.1",
     "@testing-library/jest-dom": "^6.1.5",

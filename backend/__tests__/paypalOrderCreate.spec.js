@@ -163,6 +163,28 @@ describe('POST /api/orders/paypal/create — order creation', () => {
     expect(body.application_context.shipping_preference).toBe('SET_PROVIDED_ADDRESS');
     // The US shipping address is forced for PayPal compatibility.
     expect(unit.shipping.address.country_code).toBe('US');
+    // Brand comes from APP_NAME (no legacy product name baked into the SDK call).
+    expect(body.application_context.brand_name).toBe('NovaCart');
+    // No payee pin by default: PayPal routes to the credential-owning account.
+    expect(unit.payee).toBeUndefined();
+  });
+
+  it('only sends a payee when PAYPAL_PAYEE_EMAIL is configured', async () => {
+    const client = stubCreateClient();
+    setPayPalClientForTests(client);
+
+    const previous = process.env.PAYPAL_PAYEE_EMAIL;
+    process.env.PAYPAL_PAYEE_EMAIL = 'merchant@novacart.test.example';
+    try {
+      const res = await createRequest({ items: [item()], address });
+      expect(res.status).toBe(200);
+      expect(client.captured[0].body.purchase_units[0].payee).toEqual({
+        email_address: 'merchant@novacart.test.example',
+      });
+    } finally {
+      if (previous === undefined) delete process.env.PAYPAL_PAYEE_EMAIL;
+      else process.env.PAYPAL_PAYEE_EMAIL = previous;
+    }
   });
 
   it('rejects unauthenticated order creation with 401', async () => {

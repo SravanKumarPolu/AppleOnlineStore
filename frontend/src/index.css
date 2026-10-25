@@ -463,11 +463,11 @@ a:hover {
   }
 
   .price-original {
-    @apply text-sm text-gray-500 line-through;
+    @apply text-sm text-gray-600 line-through;
   }
 
   .price-discount {
-    @apply text-sm font-semibold text-emerald-600;
+    @apply text-sm font-semibold text-emerald-700;
   }
 
   /* Modern Status Indicators */

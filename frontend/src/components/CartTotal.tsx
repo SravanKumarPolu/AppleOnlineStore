@@ -29,7 +29,7 @@ const CartTotal = () => {
           <span>{currency}{shipping.toFixed(2)}</span>
         </div>
         <hr className="border-neutral-200" />
-        <div className="flex justify-between font-semibold text-lg text-green-500">
+        <div className="flex justify-between font-semibold text-lg text-green-700">
           <span>Total</span>
           <span>{currency}{total.toFixed(2)}</span>
         </div>

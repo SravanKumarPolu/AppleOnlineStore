@@ -70,7 +70,7 @@ const Hero = () => {
             viewport={{ once: true }}
           >
             <div className="w-12 h-[3px] bg-gradient-to-r from-blue-600 to-purple-600 rounded-full" />
-            <span className="uppercase tracking-wider text-sm font-bold text-gray-600 bg-gray-100 px-4 py-2 rounded-full shadow-sm">
+            <span className="uppercase tracking-wider text-sm font-bold text-gray-700 bg-gray-100 px-4 py-2 rounded-full shadow-sm">
               Our Bestseller
             </span>
           </motion.div>

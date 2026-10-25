@@ -107,6 +107,14 @@ const orderSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  // Inventory hold expiry for unpaid PayPal orders. A PayPal order reserves
+  // stock at creation; if the shopper never approves/captures, the hold is
+  // released by services/reservationService.js once this timestamp passes.
+  // Null for COD/Card (payment is collected by the store, not by a gateway).
+  reservationExpiresAt: {
+    type: Date,
+    default: null
+  },
   // AF-1 idempotency: client-generated per-checkout-attempt key. Absent/
   // null on legacy orders and on clients that do not send the header.
   idempotencyKey: {
@@ -125,6 +133,28 @@ const orderSchema = new mongoose.Schema({
   paypalTransactionId: {
     type: String,
     sparse: true
+  },
+  // Refund bookkeeping (POST /api/orders/refund).
+  // `refundMethod` records whether the money went back through PayPal or was
+  // returned out-of-band (COD/Card orders have no gateway to refund).
+  refundedAt: {
+    type: Date,
+    default: null
+  },
+  refundId: {
+    type: String,
+    default: null
+  },
+  refundMethod: {
+    type: String,
+    enum: ['paypal', 'manual', null],
+    default: null
+  },
+  refundReason: {
+    type: String,
+    trim: true,
+    maxlength: 200,
+    default: null
   },
   // Order tracking
   trackingNumber: {
@@ -169,6 +199,8 @@ orderSchema.index(
 );
 // Removed duplicate indexes for paypalOrderId and paypalCaptureId since they are already sparse fields
 orderSchema.index({ createdAt: -1 });
+// Sweep index: "pending PayPal orders whose reservation has expired".
+orderSchema.index({ paymentStatus: 1, stockReserved: 1, reservationExpiresAt: 1 });
 
 // Instance method to update order status
 orderSchema.methods.updateStatus = function(newStatus) {

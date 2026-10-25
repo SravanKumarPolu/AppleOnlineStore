@@ -37,6 +37,13 @@ const PLACEHOLDER_EXACT = new Set([
 ]);
 const PLACEHOLDER_PATTERN = /^(your|change|replace|placeholder|example|todo|fixme)[-_*]/i;
 
+// Loose but sufficient: PayPal rejects malformed payee addresses, so a typo
+// must surface at boot rather than at the first checkout.
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+// Domains reserved for examples/tests (RFC 2606 + the sandbox convention this
+// repository used to hardcode).
+const SAMPLE_DOMAIN_PATTERN = /@(?:[\w-]+\.)*(?:example\.(?:com|org|net)|test|invalid|localhost)$/i;
+
 function isPlaceholder(value) {
   if (typeof value !== 'string') return true;
   const v = value.trim().toLowerCase();
@@ -72,6 +79,27 @@ export function validateRuntimeConfig({
   flag('PAYPAL_CLIENT_ID', env.PAYPAL_CLIENT_ID, 'PayPal order creation, capture and webhook verification will all fail', { fatalWhenLive: true });
   flag('PAYPAL_CLIENT_SECRET', env.PAYPAL_CLIENT_SECRET, 'PayPal order creation, capture and webhook verification will all fail', { fatalWhenLive: true });
   flag('PAYPAL_WEBHOOK_ID', env.PAYPAL_WEBHOOK_ID, 'every incoming webhook fails signature verification and is rejected (orders stay pending)', { fatalWhenLive: true });
+
+  // --- PayPal payee (optional) -------------------------------------------
+  // The payee used to be hardcoded to a sandbox address, which a live
+  // deployment would inherit. It is now opt-in: unset means "the account that
+  // owns the credentials". A sandbox/example payee combined with live
+  // credentials would route real money to a test account, so that is fatal.
+  const payeeEmail = typeof env.PAYPAL_PAYEE_EMAIL === 'string' ? env.PAYPAL_PAYEE_EMAIL.trim() : '';
+  if (!payeeEmail) {
+    // Unset is the documented default: PayPal routes the payment to the
+    // business account that owns the credentials. Nothing to flag.
+  } else if (isPlaceholder(payeeEmail) || !EMAIL_PATTERN.test(payeeEmail)) {
+    const problem =
+      'PAYPAL_PAYEE_EMAIL is not a valid email address — PayPal order creation will be rejected';
+    if (live) fatal.push(problem);
+    else warnings.push(problem);
+  } else if (SAMPLE_DOMAIN_PATTERN.test(payeeEmail)) {
+    const problem =
+      'PAYPAL_PAYEE_EMAIL points at an example/test domain while PAYPAL_ENV=live — real payments would be routed to a sandbox account';
+    if (live) fatal.push(problem);
+    else warnings.push(problem);
+  }
 
   // --- Auth secrets ---------------------------------------------------------
   flag('JWT_SECRET', env.JWT_SECRET, 'all authenticated routes (incl. admin) reject every request', { fatalInProd: true });

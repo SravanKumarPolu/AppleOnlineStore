@@ -140,7 +140,7 @@ environment-based (a known limitation — see [08-SECURITY.md](./08-SECURITY.md)
 | Realtime order status updates | ✅ Implemented | Socket.IO rooms `user_<id>` / `order_<id>` / `admin_room`; events `order_updated`, `new_order` (variants `payment_update`, `shipping_update`) |
 | Typing indicators in order room | 🟡 Partial | Backend relays `user_typing`/`user_stop_typing`; the frontend WebSocket context only console-logs these events |
 | Order status lifecycle (admin-driven) | ✅ Implemented | 6 statuses: Order Placed → Packing → Shipped → Out for delivery → Delivered (or Cancelled); server-side enum whitelist |
-| Payment status lifecycle | ✅ Implemented | pending → completed (capture/webhook) | failed | refunded (refunded is set only by out-of-band means; no refund flow UI) |
+| Payment status lifecycle | ✅ Implemented | pending → completed (capture/webhook) · failed · refunded (admin refund endpoint: PayPal via the Refunds API, COD/Card recorded as manual; no customer-facing refund UI) |
 | Tracking number / estimated delivery fields | 🪦 Deprecated | Schema fields exist; no UI or API writes them |
 
 ### 4.7 Admin panel
@@ -225,10 +225,12 @@ environment-based (a known limitation — see [08-SECURITY.md](./08-SECURITY.md)
 ## 6. Explicit non-goals (current state — not built, not promised)
 
 These are frequently assumed but **do not exist** in this system: product
-editing, size variants, discount/coupon engine, multi-currency, refund
-workflow UI, product reviews submission, social login, push notifications,
-background sync, order-detail route in the storefront, Docker/CI, and any
-form of session revocation. Adding any of these is new scope, not a bug fix.
+editing, size variants, discount/coupon engine, multi-currency, a
+customer-facing refund UI (refunds are an admin API action — `POST
+/api/orders/refund`), product reviews submission, social login, push
+notifications, background sync, order-detail route in the storefront,
+Docker/CI, and any form of session revocation. Adding any of these is new
+scope, not a bug fix.
 
 ## 7. Related documentation
 

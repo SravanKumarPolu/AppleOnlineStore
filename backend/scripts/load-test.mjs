@@ -79,22 +79,50 @@ function percentile(sorted, p) {
 }
 
 function procStats(pid) {
+  // Linux containers (where Phase 01 runs): /proc gives exact CPU jiffies + RSS.
+  // macOS: `ps -o time=` reports 0:00.00 even for a CPU-burning process and
+  // `top -pid` output is not machine-stable, so CPU is reported as null there
+  // instead of a fabricated 0 %. RSS is still measured (and was also broken
+  // before: the old code returned 0 MB for every process).
   try {
-    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8').split(' ');
-    const utime = Number(stat[13]) + Number(stat[14]); // ticks (100/s)
-    const mem = fs.readFileSync(`/proc/${pid}/status`, 'utf8');
-    const rss = Number((mem.match(/VmRSS:\s+(\d+) kB/) || [0, 0])[1]);
-    return { cpuTicks: utime, rssKb: rss };
-  } catch { return { cpuTicks: 0, rssKb: 0 }; }
+    if (process.platform === 'linux') {
+      const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8').split(' ');
+      const utime = Number(stat[13]) + Number(stat[14]); // ticks (100/s)
+      const mem = fs.readFileSync(`/proc/${pid}/status`, 'utf8');
+      const rss = Number((mem.match(/VmRSS:\s+(\d+) kB/) || [0, 0])[1]);
+      return { cpuTicks: utime, rssKb: rss, cpuUnitPerSecond: 100 };
+    }
+
+    const out = execSync(`ps -o rss= -p ${pid}`, { encoding: 'utf8' }).trim();
+    return { cpuTicks: null, rssKb: Number(out) || 0, cpuUnitPerSecond: 1 };
+  } catch {
+    return { cpuTicks: null, rssKb: 0, cpuUnitPerSecond: 1 };
+  }
 }
 
 // Runs `vu` concurrent workers, each looping scenario requests for DURATION s.
+// Scenario choice is WEIGHTED (a real storefront is read-heavy and does not
+// hammer /health/ready): the previous round-robin gave the probe 1/8 of all
+// traffic, which inflated throughput and told us nothing about checkout.
+function makeScenarioPicker(scenarios) {
+  const total = scenarios.reduce((sum, sc) => sum + (sc.weight ?? 1), 0);
+  return () => {
+    let roll = Math.random() * total;
+    for (const sc of scenarios) {
+      roll -= sc.weight ?? 1;
+      if (roll <= 0) return sc;
+    }
+    return scenarios[scenarios.length - 1];
+  };
+}
+
 async function runLevel(level, vu, scenarios, tokens) {
   const stop = Date.now() + DURATION * 1000;
   const results = [];
-  const workers = Array.from({ length: vu }, async (_, workerId) => {
+  const pick = makeScenarioPicker(scenarios);
+  const workers = Array.from({ length: vu }, async () => {
     while (Date.now() < stop) {
-      const sc = scenarios[workerId % scenarios.length];
+      const sc = pick();
       const token = sc.auth === 'user' ? tokens.user : sc.auth === 'admin' ? tokens.admin : null;
       const r = await requestOnce(sc.path, {
         method: sc.method,
@@ -237,16 +265,43 @@ async function main() {
   const tokens = { user: register.token, admin: adminToken };
   console.log('[2/4] Fixtures ready (shopper token, admin token, product).');
 
-  // 3. Scenario mix (read-heavy like a real storefront + authenticated paths).
+  // 3. Scenario mix — weights approximate a real storefront session: mostly
+  //    catalog reads, some authenticated reads, and a real checkout write
+  //    (order creation + atomic stock reservation + user history + analytics).
+  //    The health probe keeps a token share only (it is a probe, not traffic).
+  const loadAddress = {
+    firstName: 'Load',
+    lastName: 'Tester',
+    email: 'load@example.com',
+    street: '1 Load Street',
+    city: 'Springfield',
+    state: 'IL',
+    zipcode: '62701',
+    country: 'USA',
+    phone: '5550100',
+  };
+
   const scenarios = [
-    { name: 'GET /health/ready', path: '/health/ready' },
-    { name: 'GET /api/product/list', path: '/api/product/list?page=1&limit=12' },
-    { name: 'GET /api/product/list?search', path: '/api/product/list?page=1&limit=12&search=iPhone' },
-    { name: 'POST /api/product/single', path: '/api/product/single', method: 'POST', body: { productId: String(product._id) } },
-    { name: 'GET /api/category/list', path: '/api/category/list' },
-    { name: 'POST /api/orders/userorders (auth)', path: '/api/orders/userorders', method: 'POST', body: {}, auth: 'user' },
-    { name: 'POST /api/cart/get (auth)', path: '/api/cart/get', method: 'POST', body: {}, auth: 'user' },
-    { name: 'GET /api/orders/all (admin)', path: '/api/orders/all', auth: 'admin' },
+    { name: 'GET /health/ready', path: '/health/ready', weight: 0.02 },
+    { name: 'GET /api/product/list', path: '/api/product/list?page=1&limit=12', weight: 0.25 },
+    { name: 'GET /api/product/list?search', path: '/api/product/list?page=1&limit=12&search=iPhone', weight: 0.10 },
+    { name: 'POST /api/product/single', path: '/api/product/single', method: 'POST', body: { productId: String(product._id) }, weight: 0.20 },
+    { name: 'GET /api/category/list', path: '/api/category/list', weight: 0.05 },
+    { name: 'POST /api/orders/userorders (auth)', path: '/api/orders/userorders', method: 'POST', body: {}, auth: 'user', weight: 0.10 },
+    { name: 'POST /api/cart/get (auth)', path: '/api/cart/get', method: 'POST', body: {}, auth: 'user', weight: 0.13 },
+    { name: 'GET /api/orders/all (admin)', path: '/api/orders/all', auth: 'admin', weight: 0.05 },
+    {
+      name: 'POST /api/orders (checkout write)',
+      path: '/api/orders',
+      method: 'POST',
+      body: {
+        items: [{ productId: String(product._id), quantity: 1, color: 'Black' }],
+        address: loadAddress,
+        paymentMethod: 'COD',
+      },
+      auth: 'user',
+      weight: 0.10,
+    },
   ];
 
   // 4. Run levels with escalation guard + resource sampling.
@@ -258,7 +313,11 @@ async function main() {
     const t0 = Date.now();
     const res = await runLevel(`VU=${vu}`, vu, scenarios, tokens);
     const after = procStats(serverPid);
-    const cpuPct = +(((after.cpuTicks - before.cpuTicks) / ((Date.now() - t0) / 1000)) ).toFixed(1); // ticks are 1/100s → % of one core
+    const elapsedS = Math.max(0.001, (Date.now() - t0) / 1000);
+    const measurableCpu =
+      before.cpuTicks !== null && after.cpuTicks !== null && before.cpuTicks !== undefined && after.cpuTicks !== undefined;
+    const cpuSeconds = measurableCpu ? (after.cpuTicks - before.cpuTicks) / (after.cpuUnitPerSecond || 1) : null;
+    const cpuPct = measurableCpu ? +((cpuSeconds / elapsedS) * 100).toFixed(1) : null; // % of ONE core
     Object.assign(res, {
       server_cpu_pct_one_core: cpuPct,
       server_rss_mb: +(after.rssKb / 1024).toFixed(1),
@@ -268,7 +327,7 @@ async function main() {
     console.log(
       `  VU=${String(vu).padStart(3)} → ${res.total_requests} req | ${res.throughput_rps} rps | ` +
       `avg ${res.latency.avg_ms}ms | p50 ${res.latency.p50_ms} | p95 ${res.latency.p95_ms} | ` +
-      `p99 ${res.latency.p99_ms} | err ${res.error_rate}% | rss ${res.server_rss_mb}MB | cpu ${cpuPct}%`
+      `p99 ${res.latency.p99_ms} | err ${res.error_rate}% | rss ${res.server_rss_mb}MB | cpu ${cpuPct === null ? 'n/a (non-Linux host)' : `${cpuPct}%`}`
     );
 
     // Escalation guard.
@@ -296,13 +355,18 @@ async function main() {
       os.totalmem() /
       1024 ** 3
     ).toFixed(1)} GB RAM, Node ${process.version}, in-memory MongoDB`,
+    scenario_mix: scenarios.map((sc) => ({ name: sc.name, weight: sc.weight ?? 1 })),
+    load_notes: [
+      'POST /api/orders exercises the real checkout write path (server-side pricing, atomic stock reservation, user history, analytics).',
+      'PayPal network calls are NOT part of the mix: capture/webhook latency is dominated by the external provider. The app-side work per payment is what this mix measures.',
+    ],
     resource_sampling: 'RSS/CPU are sampled from /proc and are 0 on non-Linux hosts',
     duration_per_level_s: DURATION,
     levels: levelsOut,
     recovery: { health_ready_avg_ms: recoveryAvg, all_200: recoveryOk },
     notes: [
       'Extreme load (500 VU) intentionally NOT executed: sandbox has 2 vCPU/4GB shared with the test harness itself.',
-      'Write-heavy order placement excluded from the mix to avoid exhausting seeded stock; read/auth paths dominate a real storefront traffic profile.',
+      'Write-heavy order placement runs against a fixture product with a very large stock so the mix measures serving capacity, not inventory exhaustion.',
       'CPU percent is relative to ONE core (200% = both cores saturated).',
     ],
   };

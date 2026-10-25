@@ -1,4 +1,4 @@
-import { defineConfig } from '@playwright/test';
+import { defineConfig, devices } from '@playwright/test';
 
 // Real-browser E2E for the storefront checkout money path (testing-plan gap
 // §5.1). Two servers are orchestrated per run:
@@ -33,6 +33,15 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',
   },
+  // Cross-browser matrix. The money path must work on the three engines a
+  // shopper can realistically use, not just Chromium:
+  //   npm run test:e2e                      -> all three projects
+  //   npm run test:e2e -- --project=chromium -> fast local loop
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
+    { name: 'webkit', use: { ...devices['Desktop Safari'] } },
+  ],
   webServer: [
     {
       command: 'node scripts/e2e-server.mjs',

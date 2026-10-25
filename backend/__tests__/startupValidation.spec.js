@@ -70,6 +70,33 @@ describe('config/startupValidation — escalation matrix', () => {
     expect(report.paypalEnvironment).toBe('live');
   });
 
+  it('FATAL: a sandbox/example payee with live credentials would misroute real money', () => {
+    const report = validateRuntimeConfig({
+      env: withOverrides({ PAYPAL_PAYEE_EMAIL: 'sb-business@business.example.com' }),
+    });
+    expect(report.fatal.join(' ')).toMatch(/PAYPAL_PAYEE_EMAIL/);
+  });
+
+  it('accepts a real payee address in live', () => {
+    const report = validateRuntimeConfig({
+      env: withOverrides({ PAYPAL_PAYEE_EMAIL: 'payments@novacart.com' }),
+    });
+    expect(report.fatal).toEqual([]);
+  });
+
+  it('flags a malformed payee as a warning in sandbox (fatal in live)', () => {
+    const sandbox = validateRuntimeConfig({
+      env: withOverrides({ PAYPAL_ENV: 'sandbox', NODE_ENV: 'development', PAYPAL_PAYEE_EMAIL: 'not-an-email' }),
+    });
+    expect(sandbox.fatal).toEqual([]);
+    expect(sandbox.warnings.join(' ')).toMatch(/PAYPAL_PAYEE_EMAIL is not a valid email/);
+
+    const live = validateRuntimeConfig({
+      env: withOverrides({ PAYPAL_PAYEE_EMAIL: 'not-an-email' }),
+    });
+    expect(live.fatal.join(' ')).toMatch(/PAYPAL_PAYEE_EMAIL/);
+  });
+
   it('FATAL: PAYPAL_ENV=live with missing PayPal credentials refuses to boot', () => {
     const report = validateRuntimeConfig({
       env: withOverrides({ PAYPAL_CLIENT_SECRET: undefined }),
