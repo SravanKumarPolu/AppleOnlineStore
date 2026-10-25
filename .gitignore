@@ -1,0 +1,38 @@
+# Repository-wide ignores.
+#
+# NOTE: this file did not exist before the pre-DevOps baseline audit. Only
+# backend/.gitignore existed there (node_modules/) and it did NOT ignore
+# backend/.env — a local secrets file — so `git add .` would have committed
+# live credentials. Frontend/admin had their own partial .gitignore files;
+# this root file is the safety net for the whole monorepo.
+
+# Dependencies
+node_modules/
+
+# Secrets — never commit real values. Templates are explicitly re-included.
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Build output
+dist/
+dist-ssr/
+coverage/
+.vite/
+dev-dist/
+
+# Test artifacts
+test-results/
+playwright-report/
+blob-report/
+*.lcov
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json

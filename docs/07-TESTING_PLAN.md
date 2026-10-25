@@ -1,20 +1,17 @@
 # NovaCart — Testing Plan & Traceability (As-Built)
 
-> **Status:** Test inventory verified 2026-10-24 — updated the same day with
-> the K-1/K-4 fix specs, then with the **test-gap closure pass** driven by
-> this file's traceability matrix (§4), then with the **K-11/K-12 fix
-> locks + the admin Orders/Add/List suite extension**, and then with the
-> **admin analytics + Sidebar suite** (sales/product/user/search pages and
-> the Sidebar). Baseline: **backend 21 suites / 173 tests PASS · frontend
-> 10 files / 38 tests PASS · admin 12 files / 65 tests PASS · storefront
-> E2E 2 specs PASS (real browser vs the real backend).** This file is the
+> **Status:** Test inventory **re-verified by execution 2026-10-26** (pre-DevOps
+> baseline pass — see [devops/00-PRE-DEVOPS-QUALITY-BASELINE.md](./devops/00-PRE-DEVOPS-QUALITY-BASELINE.md)).
+> Baseline: **backend 36 suites / 359 tests PASS · frontend 23 files / 118
+> tests PASS · admin 13 files / 70 tests PASS · storefront E2E 2 spec files /
+> 13 tests PASS (real browser vs the real backend).** This file is the
 > authoritative command reference — several npm scripts lie (see §3).
 >
 > **Chain:** … → [05-API_REFERENCE.md](./05-API_REFERENCE.md) →
 > [06-DEPLOYMENT.md](./06-DEPLOYMENT.md) → **this file** →
 > [08-SECURITY.md](./08-SECURITY.md). Phase 1 execution record:
 > [docs/devops/04-TESTING-AND-VALIDATION.md](./devops/04-TESTING-AND-VALIDATION.md)
-> (76-test snapshot at its date; since grown to 173).
+> (76-test snapshot at its date; since grown to 359).
 
 ## 1. Backend suite (jest, ESM mode)
 
@@ -57,6 +54,30 @@ security decision and DB write executes for real.
 | `paypalOrderCreate.spec.js` | 6 | *Gap closure:* `POST /api/orders/paypal/create` persists a pending PayPal order (amount math, `paypalOrderId`, user history link) and returns the approve link; the captured network-edge request is STRICT-USD CAPTURE with correct breakdown; 401/400 guards; PayPal currency error → 400 `CURRENCY_NOT_SUPPORTED`, generic outage → 500 `PAYPAL_UNAVAILABLE`, nothing persisted on failure |
 | `analyticsAggregation.spec.js` | 10 | *Gap closure:* 401/403 on admin reads; `track-activity` persists a user-attributed doc (200) and rejects admin tokens (400); sales aggregation counts only completed+active orders in-window (summary, daily bucket, payment breakdown, status breakdown incl. pending); product performance ranking + rollups; user-behavior action/active-user rollups; popular searches + search stats; dashboard summary (today/month/totals/recent orders/low stock). **K-12 fixed 2026-10-24:** `categoryBreakdown` aggregates real product categories via the ObjectId-normalized `$lookup` (iPhone $200/1 order/2 units + Mac $50/1/1 from the fixtures), and a robustness case proves a completed order with a non-ObjectId `productId` is skipped (counted in summary, absent from the breakdown) instead of 500ing the report |
 
+### 1b. Additional backend suites (present since the 2026-10-24/25 passes; verified 2026-10-26)
+
+The table in §1 lists only the suites that existed when this file was first
+written. The suite has since grown to **36 spec files / 359 tests**; the
+remainder are:
+
+| Spec | Focus |
+|---|---|
+| `adversarialInputValidation.spec.js` | Payload shape abuse, oversized/ill-typed input, DB untouched on rejection |
+| `authenticationAttacks.spec.js` | Forged/expired/malformed tokens, algorithm and secret confusion, enumeration |
+| `authorizationIdorAttacks.spec.js` | Cross-user reads/writes across profile, orders, addresses |
+| `businessLogicCartCheckout.spec.js` | Cart totals vs server-side pricing, checkout invariants, legacy no-key path |
+| `categoryManagement.spec.js` | Category/subcategory CRUD contracts + validation |
+| `checkoutIdempotency.spec.js` | `Idempotency-Key` replay **and the concurrent same-key race** (B-1) |
+| `concurrencyRaceConditions.spec.js` | Parallel order/webhook operations, single stock reservation |
+| `corsOriginConfiguration.spec.js` | Allow-list matrix shared by Express and Socket.IO |
+| `debugEndpointProductionGuard.spec.js` | Debug endpoints 404 in production unless explicitly enabled |
+| `injectionWebSecurity.spec.js` | NoSQL/operator injection, XSS-shaped input, response hygiene |
+| `inventoryPricingIntegrity.spec.js` | Atomic reservation, oversell floor, cancel-restore, server-side price authority |
+| `mongodbConnectionConfig.spec.js` | URI resolution matrix, connection failure, readiness |
+| `productImageLifecycle.spec.js` | Image array handling on add/remove paths |
+| `shopperAdminTokenBoundary.spec.js` | Admin tokens rejected on shopper routes (403) and vice versa |
+| `modelIndexIntegrity.spec.js` | **New 2026-10-26** — index-name conflicts, AF-1 unique partial index, `connectDB` awaits index build |
+
 ## 2. Frontend suite (vitest)
 
 ```bash
@@ -70,7 +91,24 @@ LatestCollection, ProductItems, PlaceOrder checkout wiring (COD/Card submit
 PayPal branch untouched — since the 2026-10-24 K-1 fix — plus the delivery
 form's `POST /api/user/addresses` save case from the K-11 fix), and
 `AddressBook.test.tsx` (5 specs locking every K-11 mutation URL/method/payload
-against the backend contract).
+against the backend contract), plus the 2026-10-26 baseline additions:
+`Cart.test.tsx` (7 — line items, totals, quantity floor, removal, empty state,
+login guard, checkout CTA), `Collection.test.tsx` (6 — pagination,
+catalog-wide price sort, filter page-clamping, clear-filters, search) and
+`Orders.test.tsx` (7 — token-authenticated history query, rendered order,
+filter/pagination re-queries, empty/error states, anonymous redirect),
+`Profile.test.tsx` (7 — the save path was a no-op until 2026-10-26: PUT wiring,
+adopted user, rejection/network failure, cancel, logout, guard),
+`ResetPassword.test.tsx` (6 — token guard, mismatch, password policy, POST
+payload, rejected token, checklist) and `StaticPages.test.tsx` (4 — smoke for
+Home/About/Contact/NotFound). The same pass added `useProducts.test.ts` (7),
+`useCategories.test.ts` (4), `NavBar.test.tsx` (5), `SearchBar.test.tsx` (5)
+and `Chrome.test.tsx` (3 — Layout/Hero/Footer composition).
+
+Test infrastructure note (2026-10-26): `framer-motion` is replaced in
+`src/test/setup.ts` by static pass-through elements — real animation trees cost
+~0.5 s per product card in jsdom and made suites time out under load — and the
+suite timeout is 15 s (`vitest.config.ts`). Do not assert animation state.
 
 ## 2b. Admin suite (vitest — infrastructure added 2026-10-24)
 
@@ -119,8 +157,8 @@ run — no manual setup:
 2. **Storefront**: the vite dev server on `:5173` (default CORS-allowed
    origin).
 
-`e2e/checkout.spec.ts` (2 specs) then drives **real Chromium** through the
-money path: UI registration (form → token in localStorage) → catalog browse
+`e2e/checkout.spec.ts` (3 tests) and `e2e/ui-audit.spec.ts` (10 tests) then drive
+**real Chromium** through the money path: UI registration (form → token in localStorage) → catalog browse
 → product page → color + add-to-cart (server cart sync observed) → cart page
 → delivery form → **COD** / **Card** order → `/orders` redirect → the
 persisted order verified through the API with the browser's own token
@@ -140,8 +178,8 @@ PayPal SDK/approve-link wiring remains covered by mocked-edge backend specs
 |---|---|
 | `cd backend && npm run test:security` | ✅ The regression suite (canonical) |
 | `cd backend && node --experimental-vm-modules node_modules/.bin/jest --runInBand` | ✅ Same thing, spelled out (plain `npx jest` **fails** on ESM spec imports — expected) |
-| `cd backend && npm test` | ⚠️ Runs `scripts/run-tests.js` — needs a **live MongoDB + SMTP + env**; it is NOT the regression suite (a harness with ephemeral infra exists in the Phase 1 record) |
-| `cd backend && npm run lint` / `build` | ✅ lint clean · `build` is a placeholder echo (no compile step — pre-existing) |
+| `cd backend && npm test` | ⚠️ **Alias of the Jest suite since 2026-10-25** (not the smoke runner). The live-MongoDB/SMTP runner is `npm run test:smoke` |
+| `cd backend && npm run lint` / `build` | ✅ lint clean · `build` runs `scripts/check-syntax.mjs` (`node --check` over every first-party file — replaced the old echo on 2026-10-26) |
 | `cd frontend && npm run lint` / `type-check` / `test -- --run` / `build` | ✅ All pass (PWA precache emitted) |
 | `cd frontend && npm run test:e2e` | ✅ **Real since 2026-10-24** — Playwright vs the orchestrated real stack (§2c); first run downloads the Chromium binary |
 | `cd frontend && npm run test:e2e:ui` | ⚠️ Playwright UI mode — needs a display; use plain `test:e2e` headless |
@@ -197,7 +235,9 @@ real-browser COD/Card checkout E2E. Closed by the follow-up pass the same
 day: the K-11 and K-12 fixes (each with locking specs) and the admin
 Orders/Add/List page suites. Closed by the 2026-10-25 pass: the admin
 analytics pages (sales/product/user/search) and the Sidebar — the admin
-panel's shipped surface is now fully covered (12 files / 65 tests). What
+panel's shipped surface is now fully covered (13 files / 70 tests). Additionally
+closed on 2026-10-26: the cart page, the catalog sort/filter logic and the
+startup/index contract (`modelIndexIntegrity`). What
 honestly remains:
 
 1. **Live PayPal validation** (owner action) — everything mocked is exactly

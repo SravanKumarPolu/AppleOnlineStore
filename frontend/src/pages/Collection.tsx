@@ -56,38 +56,37 @@ const Collection = () => {
       productsCopy = productsCopy.filter(item => item.bestseller === true)
     }
 
+    // Sort the WHOLE filtered collection before paginating. Sorting the
+    // current page slice (the previous behavior) made "Low to High" wrong
+    // whenever the catalog spanned more than one page: the cheapest product
+    // could sit on a later page and never appear first.
+    if (sortType === 'low-high') {
+      productsCopy.sort((a, b) => a.price - b.price)
+    } else if (sortType === 'high-low') {
+      productsCopy.sort((a, b) => b.price - a.price)
+    }
+
     // Update total count and pages
-    setTotalProducts(productsCopy.length);
-    setTotalPages(Math.ceil(productsCopy.length / productsPerPage));
+    const pageCount = Math.max(1, Math.ceil(productsCopy.length / productsPerPage))
+    setTotalProducts(productsCopy.length)
+    setTotalPages(pageCount)
+
+    // Clamp instead of rendering an empty page: a filter change can shrink the
+    // result set below the page the shopper is currently on.
+    const page = Math.min(currentPage, pageCount)
+    if (page !== currentPage) {
+      setCurrentPage(page)
+    }
 
     // Apply pagination
-    const startIndex = (currentPage - 1) * productsPerPage;
+    const startIndex = (page - 1) * productsPerPage;
     const endIndex = startIndex + productsPerPage;
     setFilterProducts(productsCopy.slice(startIndex, endIndex));
-  }, [products, showSearch, search, category, subCategory, showBestsellers, currentPage, productsPerPage])
+  }, [products, showSearch, search, category, subCategory, showBestsellers, currentPage, productsPerPage, sortType])
 
   useEffect(() => {
     applyFilter();
   }, [applyFilter])
-
-  const sortProduct = useCallback(() => {
-    // Sorting reads the current page snapshot through the functional setState
-    // updater, so this callback does not depend on `filterProducts` and cannot
-    // retrigger itself in an effect loop.
-    if (sortType === 'low-high' || sortType === 'high-low') {
-      setFilterProducts(prev =>
-        prev.slice().sort((a, b) =>
-          sortType === 'low-high' ? a.price - b.price : b.price - a.price
-        )
-      )
-    } else {
-      applyFilter()
-    }
-  }, [sortType, applyFilter])
-
-  useEffect(() => {
-    sortProduct()
-  }, [sortProduct])
 
   const clearFilters = () => {
     setCategory([]);

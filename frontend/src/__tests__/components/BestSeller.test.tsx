@@ -1,11 +1,18 @@
 import type { ReactNode } from 'react';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import BestSeller from '../../components/BestSeller';
 import { ShopContext } from '../../context/shop-context';
 import type { ShopContextType } from '../../types';
 import { createMockContextValue, makeProduct, renderWithProviders } from '../../test/helpers';
+
+// Same rationale as LatestCollection: the card is covered separately, and
+// rendering full cards makes this spec slow enough to flake under coverage
+// instrumentation.
+vi.mock('../../components/ProductItems', () => ({
+  default: ({ name }: { name: string }) => <p>{name}</p>,
+}));
 
 describe('BestSeller (Rules of Hooks regression)', () => {
   it('renders bestseller products from the catalog', () => {

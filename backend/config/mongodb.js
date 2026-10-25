@@ -144,6 +144,29 @@ const connectDB = async (options = {}) => {
     throw err;
   }
 
+  // Index construction is part of the readiness contract, not a background
+  // detail. Mongoose builds declared indexes asynchronously after connect(),
+  // so on a fresh database (first deploy, restored database, or the release
+  // that first declares an index) there is a window where writes are not yet
+  // protected by them. The checkout idempotency suite reproduced exactly that
+  // window: five simultaneous submissions carrying one Idempotency-Key
+  // produced five orders because the unique partial index did not exist yet.
+  // server.js awaits connectDB() before it starts listening, so awaiting
+  // Model.init() here closes the window for real traffic. Fatal on failure: an
+  // index that cannot be built means the stored data already violates an
+  // invariant the application depends on (duplicate keys, etc.), and booting
+  // anyway would silently disable that protection.
+  try {
+    const models = Object.values(mongoose.models);
+    await Promise.all(models.map((model) => model.init()));
+    if (models.length > 0) {
+      console.log(`✅ MongoDB indexes ready for ${models.length} model(s)`);
+    }
+  } catch (err) {
+    console.error('❌ MongoDB index initialization failed:', redactError(err));
+    throw err;
+  }
+
   console.log(`✅ MongoDB Connected: ${connection.name}`);
   return connection;
 };

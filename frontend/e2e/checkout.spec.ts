@@ -10,6 +10,14 @@ import { test, expect, type Page } from '@playwright/test';
 
 const PRODUCT_NAME = 'iPhone 15 Pro E2E';
 
+// The E2E backend port is configurable (playwright.config.ts: E2E_PORT). It
+// MUST be derived here too: a hardcoded :3001 made this verification hit
+// whatever happened to listen on 3001 — e.g. a developer's own dev server —
+// instead of the ephemeral stack under test, which failed with "Failed to
+// fetch" when that server had a different JWT secret/CORS policy.
+const API_BASE =
+  process.env.E2E_API_BASE || `http://localhost:${process.env.E2E_PORT || 3001}`;
+
 // Client-side validation only allows letters+spaces in the name — no digits.
 // A fresh account is generated per test (duplicate emails 400 by design).
 const newAccount = () => ({
@@ -59,15 +67,15 @@ async function verifyOrderViaApi(
   productName: string,
   expectedMethod: string
 ) {
-  const verification = await page.evaluate(async () => {
+  const verification = await page.evaluate(async (apiBase) => {
     const token = localStorage.getItem('token') ?? '';
-    const res = await fetch('http://localhost:3001/api/orders/userorders', {
+    const res = await fetch(`${apiBase}/api/orders/userorders`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', token },
       body: JSON.stringify({}),
     });
     return res.json();
-  });
+  }, API_BASE);
 
   expect(verification.success).toBe(true);
   const orders = verification.orders ?? verification.data ?? [];

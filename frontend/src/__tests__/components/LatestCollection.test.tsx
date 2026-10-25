@@ -3,6 +3,14 @@ import { screen, fireEvent } from '@testing-library/react';
 import LatestCollection from '../../components/LatestCollection';
 import { createMockContextValue, makeProduct, renderWithProviders } from '../../test/helpers';
 
+// Rendering 8 real product cards costs seconds of jsdom CPU (and ~18 s under
+// coverage instrumentation), which timed out this spec. The behaviour under
+// test is "slice the newest 8", not the card itself (covered by
+// ProductItems.test.tsx).
+vi.mock('../../components/ProductItems', () => ({
+  default: ({ name }: { name: string }) => <p>{name}</p>,
+}));
+
 describe('LatestCollection (Rules of Hooks regression)', () => {
   it('renders up to 8 newest products', () => {
     const products = Array.from({ length: 10 }, (_, i) =>

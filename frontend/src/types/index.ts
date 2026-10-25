@@ -136,6 +136,7 @@ export interface ShopContextType {
   setToken: (token: string) => void;
   isLoggedIn: boolean;
   user: User | null;
+  setUser: (user: User | null) => void;
   loginUser: (email: string, password: string) => Promise<boolean>;
   registerUser: (name: string, email: string, password: string) => Promise<boolean>;
   logoutUser: () => void;

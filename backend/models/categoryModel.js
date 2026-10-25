@@ -46,7 +46,11 @@ const categorySchema = new mongoose.Schema({
 
 // Index for better query performance
 categorySchema.index({ isActive: 1, sortOrder: 1 });
-categorySchema.index({ name: 1 });
+// NOTE: `name` must NOT be re-declared here. The field already carries
+// `unique: true`, which creates the `name_1` index; a second plain
+// `index({ name: 1 })` collided with it (same auto-generated name, different
+// uniqueness) and made Model.init() fail — caught by the readiness change that
+// awaits index construction before the server listens.
 
 // Static method to get active categories
 categorySchema.statics.getActiveCategories = function() {

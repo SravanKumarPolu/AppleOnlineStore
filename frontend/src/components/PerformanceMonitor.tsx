@@ -18,7 +18,14 @@ const PerformanceMonitor = () => {
 
     const measurePerformance = () => {
       if ('performance' in window) {
-        const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming;
+        const navigation = performance.getEntriesByType('navigation')[0] as
+          | PerformanceNavigationTiming
+          | undefined;
+        // The Navigation Timing entry is not guaranteed: jsdom does not
+        // implement it, and older webviews return an empty list. Reading it
+        // unguarded threw inside the effect, which broke the whole Layout.
+        if (!navigation) return;
+
         const paint = performance.getEntriesByType('paint');
         
         const firstContentfulPaint = paint.find(entry => entry.name === 'first-contentful-paint');

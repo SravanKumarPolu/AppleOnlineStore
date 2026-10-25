@@ -27,6 +27,12 @@ reliability, testing, completion report, webhook-fix rationale, credential
 rotation runbook, PayPal sandbox validation checklist, and the go-live
 gates execution report (2026-10-24 — rotation/validation status).
 
+**Current pre-DevOps gate:**
+[docs/devops/00-PRE-DEVOPS-QUALITY-BASELINE.md](docs/devops/00-PRE-DEVOPS-QUALITY-BASELINE.md)
+— executed 2026-10-26: 36 backend suites / 359 tests, 23 storefront files /
+118 tests, 13 admin files / 70 tests, 13 real-browser E2E tests, plus the load
+baseline artifact. Read it before planning DevOps Phase 01.
+
 **Everything else at the repo root is HISTORY, not truth** (see §6).
 
 ## 2. Repository layout
@@ -44,16 +50,17 @@ NovaCart/
 ## 3. Command truth table (verified — copy these, not package.json)
 
 ```bash
-# Backend regression suite — THE canonical gate (31 suites / 293 tests)
+# Backend regression suite — THE canonical gate (36 suites / 359 tests)
 cd backend && npm run test:security
 # equivalent: node --experimental-vm-modules node_modules/.bin/jest --runInBand
 
 cd backend && npm run lint            # clean
-cd frontend && npm run lint && npm run type-check && npm run test -- --run   # 12 files / 57 tests (vitest 5)
+cd backend && npm run build           # real syntax check (node --check over 90 files)
+cd frontend && npm run lint && npm run type-check && npm run test -- --run   # 23 files / 118 tests (vitest 5)
 cd frontend && npm run build          # PWA build
-cd frontend && npm run test:e2e       # real-browser E2E (Playwright, 2 specs: COD + Card checkout)
-cd admin && npm run test -- --run     # 13 files / 70 tests (vitest 5; grew 2026-10-24 -> 2026-10-25)
-cd admin && npm run lint && npm run build
+cd frontend && npm run test:e2e       # real-browser E2E (Playwright, 2 spec files / 13 tests: COD + Card + UI audit)
+cd admin && npm run test -- --run     # 13 files / 70 tests (vitest 5)
+cd admin && npm run lint && npm run type-check && npm run build
 
 # All three dev servers
 cd backend  && npm run dev            # API + Socket.IO
@@ -65,11 +72,11 @@ cd admin    && npm run dev            # admin panel (port 5174)
 
 | Command | Why |
 |---|---|
-| `cd backend && npm test` | Needs live MongoDB + SMTP; it is a 7-category infra runner, not the regression suite |
+| `cd backend && npm test` | **Alias of the Jest regression suite since 2026-10-25** (not a separate infra runner). The live-MongoDB/SMTP smoke runner is `npm run test:smoke` — never use it as a gate |
 | `npx jest` (plain) | Fails on ESM spec imports — use the `--experimental-vm-modules` form |
-| `frontend` `test:e2e:ui` | Playwright UI mode needs a display; plain `test:e2e` IS the headless/CI path and is real since 2026-10-24 (Playwright vs a real backend, see docs/07 §2c; first run downloads the Chromium binary) |
+| `frontend` `test:e2e:ui` | Playwright UI mode needs a display; plain `test:e2e` IS the headless/CI path and is real since 2026-10-24 (Playwright vs a real backend, see docs/07 §2c; first run downloads the Chromium binary). Ports are overridable: `E2E_PORT=3101 E2E_WEB_PORT=5273 npm run test:e2e` |
 | `admin` `npm test` (watch mode) | Exists but watch-mode — use `npm run test -- --run` in CI |
-| `backend` `npm run build` | Placeholder echo (no compile step) |
+| `npm run security:audit` | Read-only `npm audit` since 2026-10-26 (the old `npm audit fix` mutated the tree) |
 
 **Fixed 2026-10-25 (K-7):** `db:seed` → `scripts/seedCategories.js`,
 `db:migrate` → `scripts/migrateOrders.js`, `email:test` → the real
@@ -79,19 +86,22 @@ cd admin    && npm run dev            # admin panel (port 5174)
 
 ## 4. Environment variables (the only real ones)
 
-**Backend (27):** `NODE_ENV, PORT, MONGODB_URI, JWT_SECRET, ADMIN_EMAIL,
-ADMIN_PASSWORD, PAYPAL_ENV, PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET,
-PAYPAL_WEBHOOK_ID, WEBHOOK_PROCESSING_LOCK_MS,
+**Backend (30):** `NODE_ENV, PORT, MONGODB_URI, MONGODB_DB (optional),
+JWT_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD, PAYPAL_ENV, PAYPAL_CLIENT_ID,
+PAYPAL_CLIENT_SECRET, PAYPAL_WEBHOOK_ID, WEBHOOK_PROCESSING_LOCK_MS,
 WEBHOOK_MAX_UNMATCHED_ATTEMPTS, SHUTDOWN_TIMEOUT_MS, FRONTEND_URL,
-ADMIN_URL, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_SECURE,
-SMTP_ALLOW_SELF_SIGNED, EMAIL_FROM, EMAIL_FROM_NAME, APP_NAME,
-CLOUDINARY_NAME, CLOUDINARY_API_KEY, CLOUDINARY_SECRET_KEY`.
+ADMIN_URL, CORS_EXTRA_ORIGINS (optional), SMTP_HOST, SMTP_PORT, SMTP_USER,
+SMTP_PASS, SMTP_SECURE, SMTP_ALLOW_SELF_SIGNED, EMAIL_FROM, EMAIL_FROM_NAME,
+APP_NAME, CLOUDINARY_NAME, CLOUDINARY_API_KEY, CLOUDINARY_SECRET_KEY,
+ENABLE_DEBUG_ENDPOINTS (optional)`.
 **Frontend (2):** `VITE_BACKEND_URL`, `VITE_PAYPAL_CLIENT_ID`.
 **Admin (1):** `VITE_BACKEND_URL`.
 
-`backend/.env.example` now documents **exactly** these (K-8 fix, 2026-10-25):
-all 27 runtime vars, grouped, with code-verified defaults, plus a
-clearly-marked dev/test section. The old template's ~60 aspirational vars
+`backend/.env.example` now documents **exactly** these (created 2026-10-26;
+the file the legacy templates pointed at had been missing): all 30 runtime
+vars, grouped, with code-verified defaults. `MONGODB_DB`,
+`CORS_EXTRA_ORIGINS` and `ENABLE_DEBUG_ENDPOINTS` are optional and default to
+`e-commerce` / empty / `false`. The old template's ~60 aspirational vars
 (Stripe, Razorpay, OAuth, Redis, Twilio, FCM…) are gone. The dead
 `services/analyticsService.js` (which read `ENABLE_ANALYTICS` /
 `PERFORMANCE_SAMPLE_RATE` and required nonexistent model files) was removed
@@ -133,8 +143,10 @@ When a history file contradicts `docs/`, **`docs/` wins.**
 
 1. **COD/Card checkout order creation is real since 2026-10-24** (K-1
    fixed): `PlaceOrder.tsx` POSTs to `/api/orders` (UI keys `cod`→`'COD'`,
-   `stripe`→`'Card'`); the backend whitelists `COD|PayPal|Card` (400
-   otherwise). Card is **gateway-less** — orders land `paymentStatus:'pending'`
+   `stripe`→`'Card'`); the backend whitelists `COD|Card` (400
+   otherwise) — `PayPal` is deliberately rejected there so PayPal orders must
+   be created through `/api/orders/paypal/create` with a `paypalOrderId` the
+   webhook can match. Card is **gateway-less** — orders land `paymentStatus:'pending'`
    and the store collects manually.
 2. **"stripe" fallback is not a gateway** — auto-switched after PayPal
    currency/seller/country errors; it creates a pending `Card` order, not an
@@ -201,9 +213,9 @@ When a history file contradicts `docs/`, **`docs/` wins.**
 
 1. **Regression gate before any merge:** `cd backend && npm run
    test:security` + frontend lint/type-check/test/build + admin
-   lint/test/build (admin has had a real vitest gate since 2026-10-24 —
-   12 files / 65 tests; the shipped admin surface is fully covered since
-   the 2026-10-25 analytics + Sidebar pass).
+   lint/type-check/test/build (admin gate: 13 files / 70 tests; the shipped
+   admin surface is fully covered). Baseline evidence and numbers:
+   [docs/devops/00-PRE-DEVOPS-QUALITY-BASELINE.md](docs/devops/00-PRE-DEVOPS-QUALITY-BASELINE.md).
 2. **Webhook changes are high-risk**: extend the state-machine specs
    (`webhookIdempotency`, `webhookUnmatchedCapture`,
    `captureEndpointVerification`) alongside any behavior change. The

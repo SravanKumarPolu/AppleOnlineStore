@@ -155,6 +155,9 @@ const ShopContextProvider: React.FC<ShopContextProviderProps> = ({ children }) =
     setToken: auth.setToken,
     isLoggedIn: auth.isLoggedIn,
     user: auth.user,
+    // Exposed so a page can adopt a server-returned user (e.g. the profile
+    // update response) without re-fetching the whole session.
+    setUser: auth.setUser,
     loginUser: auth.loginUser,
     registerUser: auth.registerUser,
     logoutUser: auth.logoutUser,

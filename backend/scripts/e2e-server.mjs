@@ -106,8 +106,10 @@ const child = spawn(process.execPath, ['server.js'], {
     PAYPAL_CLIENT_SECRET: 'e2e-paypal-client-secret',
     PAYPAL_WEBHOOK_ID: 'e2e-paypal-webhook-id',
     APP_NAME: 'NovaCart',
-    FRONTEND_URL: 'http://localhost:5173',
-    ADMIN_URL: 'http://localhost:5174',
+    // Overridable so the whole stack can move off the default ports when a
+    // developer already has the app running (playwright.config.ts passes it).
+    FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:5173',
+    ADMIN_URL: process.env.ADMIN_URL || 'http://localhost:5174',
     ADMIN_EMAIL: 'e2e-admin@example.com',
     ADMIN_PASSWORD: 'e2e-admin-password-1',
     CLOUDINARY_NAME: 'e2e-cloud',

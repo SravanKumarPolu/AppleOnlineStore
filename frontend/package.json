@@ -17,8 +17,7 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "type-check": "tsc --noEmit",
-    "security:audit": "npm audit && npm audit fix",
-    "pwa:generate": "vite-plugin-pwa",
+    "security:audit": "npm audit",
     "deploy:staging": "echo 'Deploy to staging environment'",
     "deploy:production": "echo 'Deploy to production environment'"
   },

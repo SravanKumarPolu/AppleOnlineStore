@@ -1,11 +1,15 @@
 import { useEffect, useState } from "react";
 import { useShopContext } from "../context/shop-context";
 import { useNavigate } from "react-router-dom";
+import { toast } from "react-toastify";
+
+const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
 
 const Profile = () => {
-  const { isLoggedIn, user, logoutUser } = useShopContext();
+  const { isLoggedIn, user, logoutUser, token, setUser } = useShopContext();
   const navigate = useNavigate();
   const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [formData, setFormData] = useState({
     name: user?.name || "",
     email: user?.email || "",
@@ -37,8 +41,44 @@ const Profile = () => {
     }));
   };
 
-  const handleSave = () => {
-    // TODO: Implement profile update functionality
+  const handleSave = async () => {
+    if (isSaving) return;
+    setIsSaving(true);
+    try {
+      // PUT /api/user/profile updates only the caller's own document — the
+      // backend derives the user from the token and ignores any userId in the
+      // body (locked by authorizationIdorAttacks).
+      const response = await fetch(`${backendUrl}/api/user/profile`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          token,
+        },
+        body: JSON.stringify({ name: formData.name, email: formData.email }),
+      });
+
+      const data = await response.json();
+
+      if (!data.success || !data.user) {
+        toast.error(data.message || 'Failed to update profile');
+        return;
+      }
+
+      setUser(data.user);
+      setIsEditing(false);
+      toast.success('Profile updated successfully');
+    } catch (error) {
+      console.error('Profile update error:', error);
+      toast.error('Failed to update profile');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Cancelling must discard edits — otherwise the discarded values reappear
+  // the next time the form is opened.
+  const handleCancel = () => {
+    setFormData({ name: user?.name || "", email: user?.email || "" });
     setIsEditing(false);
   };
 
@@ -132,12 +172,13 @@ const Profile = () => {
                   <>
                     <button
                       onClick={handleSave}
-                      className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+                      disabled={isSaving}
+                      className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                     >
-                      Save Changes
+                      {isSaving ? 'Saving...' : 'Save Changes'}
                     </button>
                     <button
-                      onClick={() => setIsEditing(false)}
+                      onClick={handleCancel}
                       className="px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400 transition-colors"
                     >
                       Cancel

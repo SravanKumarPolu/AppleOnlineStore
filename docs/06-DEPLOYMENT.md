@@ -44,7 +44,7 @@ Terraform, or process-manager config. What exists:
 cd backend
 cp .env.example .env          # then fill REAL values (see §3)
 npm install
-npm run test:security         # regression gate (21 suites / 173 tests)
+npm run test:security         # regression gate (36 suites / 359 tests)
 node server.js                # listens on 0.0.0.0:$PORT
 
 # Storefront
@@ -162,7 +162,7 @@ never printed, only variable names.
 | npm audit advisories (backend 64 / frontend 55 / admin 22 incl. dev trees) | 📋 Remediation plan drafted, pending approval (S2) |
 
 Phase 1 conclusion (preserved): **CONDITIONAL GO** — all code-level gates
-passed (13 suites / 111 tests at that time; since grown to 21 suites / 173 tests); deployment is gated on the owner actions
+passed (13 suites / 111 tests at that time; since grown to 36 suites / 359 tests — see `docs/devops/00-PRE-DEVOPS-QUALITY-BASELINE.md`); deployment is gated on the owner actions
 above (`docs/devops/05-PHASE1-COMPLETION-REPORT.md` §7).
 
 ## 6. PLANNED — DevOps roadmap (does NOT exist yet)

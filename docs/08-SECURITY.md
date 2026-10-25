@@ -111,9 +111,9 @@ plan (do not remove ad hoc — lockfiles and CI assumptions change).
 
 ## 8. Security validation status
 
-- ✅ Automated: 21 backend suites / 173 tests (authz matrices, auth/lockout/
+- ✅ Automated: 36 backend suites / 359 tests (authz matrices, auth/lockout/
   password-reset contracts, webhook fail-closed + state machine, redaction
-  canaries, shutdown lifecycle) — canonical command in
+  canaries, shutdown lifecycle, index/startup contract) — canonical command in
   [07-TESTING_PLAN.md](./07-TESTING_PLAN.md) §1.
 - ✅ Live gate-execution battery (2026-10-24): 27/27 feature smoke over real
   HTTP with rotated credentials + both fatal-guardrail boot proofs —

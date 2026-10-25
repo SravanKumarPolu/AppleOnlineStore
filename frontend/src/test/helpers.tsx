@@ -39,6 +39,7 @@ export const createMockContextValue = (
     setToken: vi.fn(),
     isLoggedIn: false,
     user: null,
+    setUser: vi.fn(),
     loginUser: vi.fn(async () => false),
     registerUser: vi.fn(async () => false),
     logoutUser: vi.fn(),

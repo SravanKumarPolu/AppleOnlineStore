@@ -12,6 +12,7 @@
 //
 // Usage: node scripts/load-test.mjs [--max-vu 250] [--duration 15]
 import http from 'node:http';
+import os from 'node:os';
 import { spawn, execSync } from 'node:child_process';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -143,7 +144,10 @@ async function runLevel(level, vu, scenarios, tokens) {
 // ---------------- main ----------------
 async function main() {
   console.log('=== NovaCart Load Test Harness ===');
-  console.log(`Levels: 1, 10, 50, 100, ${MAX_VU} VUs | ${DURATION}s each | stop-if: err>5% or p95>3000ms`);
+  // Levels actually executed (dedup + cap), printed from the same array the
+  // loop uses so the banner can never advertise a level that is not run.
+  const LEVELS = [1, 10, 50, 100, MAX_VU].filter((v, i, a) => a.indexOf(v) === i && v <= MAX_VU);
+  console.log(`Levels: ${LEVELS.join(', ')} VUs | ${DURATION}s each | stop-if: err>5% or p95>3000ms`);
 
   // 1. Boot the backend (in-memory Mongo + seeds + real server.js).
   console.log('\n[1/4] Booting backend via e2e-server.mjs ...');
@@ -162,7 +166,20 @@ async function main() {
     server.kill('SIGKILL');
     process.exit(1);
   }
-  const serverPid = execSync('pgrep -f "node server.js" | head -1').toString().trim();
+  // Resolve the PID of the server this harness just spawned — NOT the first
+  // `node server.js` on the machine. `pgrep -f` previously matched whatever
+  // dev server was already running, so RSS/CPU were sampled from the wrong
+  // process (and a developer's own server appeared in the results). e2e-server
+  // spawns exactly one child: the real server.js.
+  const resolveServerPid = () => {
+    try {
+      const child = execSync(`pgrep -P ${server.pid}`).toString().trim().split('\n')[0];
+      return child || String(server.pid);
+    } catch {
+      return String(server.pid);
+    }
+  };
+  const serverPid = resolveServerPid();
   console.log(`Backend ready (pid ${serverPid}).`);
 
   // 2. Prepare tokens + product id from the seed.
@@ -236,8 +253,6 @@ async function main() {
   console.log('[3/4] Running load levels ...');
   const levelsOut = [];
   const resourceSamples = [];
-  const LEVELS = [1, 10, 50, 100, MAX_VU].filter((v, i, a) => a.indexOf(v) === i && v <= MAX_VU);
-
   for (const vu of LEVELS) {
     const before = procStats(serverPid);
     const t0 = Date.now();
@@ -275,7 +290,13 @@ async function main() {
   server.kill('SIGTERM');
   const summary = {
     generated_at: new Date().toISOString(),
-    environment: 'isolated sandbox — 2 vCPU, 4 GB RAM, in-memory MongoDB, Node 24',
+    // Measured, not claimed: the previous string was a hardcoded "2 vCPU /
+    // 4 GB sandbox" that travelled into every result file regardless of host.
+    environment: `${os.platform()} ${os.arch()} — ${os.cpus().length} vCPU, ${(
+      os.totalmem() /
+      1024 ** 3
+    ).toFixed(1)} GB RAM, Node ${process.version}, in-memory MongoDB`,
+    resource_sampling: 'RSS/CPU are sampled from /proc and are 0 on non-Linux hosts',
     duration_per_level_s: DURATION,
     levels: levelsOut,
     recovery: { health_ready_avg_ms: recoveryAvg, all_200: recoveryOk },
@@ -285,7 +306,10 @@ async function main() {
       'CPU percent is relative to ONE core (200% = both cores saturated).',
     ],
   };
-  fs.mkdirSync(OUT.replace('/load-results.json', ''), { recursive: true });
+  // Write the artifact: create the PARENT directory only. The previous
+  // `OUT.replace('/load-results.json','')` mkdir'ed the output path itself for
+  // any non-default LOAD_TEST_OUT, which then failed writeFileSync with EISDIR.
+  fs.mkdirSync(dirname(OUT), { recursive: true });
   fs.writeFileSync(OUT, JSON.stringify(summary, null, 2));
   console.log(`\nResults written to ${OUT}`);
   process.exit(0);

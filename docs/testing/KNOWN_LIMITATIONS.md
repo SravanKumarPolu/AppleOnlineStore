@@ -1,5 +1,10 @@
 # Known Limitations — Pre-DevOps State
 
+> **Superseded for test/gate status by**
+> [../devops/00-PRE-DEVOPS-QUALITY-BASELINE.md](../devops/00-PRE-DEVOPS-QUALITY-BASELINE.md)
+> (2026-10-26, every number executed). This file remains the qualitative
+> limitation list; items resolved by the baseline pass are struck through below.
+
 **Date:** 2026-10-26. Honest inventory of everything that is NOT done, NOT verified, or accepted as-is. Items are ordered by operational impact.
 
 ---
@@ -20,10 +25,10 @@
 6. **Socket.IO is single-process** (in-memory adapter) — multi-replica scaling requires sticky sessions or a Redis adapter; also, `GET /api/socket/status` and the connected-users map are per-process only. Long-lived sockets are not re-validated against `tokenVersion`.
 7. **No TLS anywhere in the current topology** — the API assumes upstream termination (DevOps phase).
 8. **`orderModel.items[].productId` is a String** (historical). Analytics joins normalize it (`$convert`); any new aggregation must do the same. Type migration deliberately out of scope.
-9. **Mongoose duplicate-index warnings** on `users.email` and `categories.name` (declared twice in schema definitions). Harmless (server dedupes) — cosmetic cleanup deferred to avoid schema churn in stabilization.
+9. ~~**Mongoose duplicate-index warnings** on `users.email` and `categories.name` (declared twice in schema definitions).~~ **FIXED 2026-10-26:** the duplicate declarations were not cosmetic — they made `Model.init()` fail, which became a startup blocker once `connectDB()` started awaiting index construction. Redundant `schema.index()` calls removed; locked by `modelIndexIntegrity.spec.js`.
 10. **Stale SKR branding remnants** — `frontend/index.html` og:url/og:image metadata and PWA manifest still reference `skr-e-commerce.netlify.app`. Cosmetic; no functional effect (CORS no longer references the domain).
 11. **Legacy root-level debug/fix scripts and ~20 historical PAYPAL_*.md reports** remain in the repository root as history. They are not part of any test/build path. Candidate for archival in the DevOps phase; not removed now (preserving user artifacts).
-12. **Two env templates coexist** — `backend/env.example` and `frontend/env.example` (no dot) are legacy exhaustive templates listing many variables no code reads; both now carry a supersession header pointing at the authoritative `.env.example` files.
+12. **Two legacy env templates coexist** — `backend/env.example` and `frontend/env.example` (no dot) list many variables no code reads; both carry a supersession header. The authoritative templates they point at (`backend/.env.example` 30 vars, `frontend/.env.example` 2, `admin/.env.example` 1) **were missing until 2026-10-26** and now exist.
 13. **Accessibility coverage is basic** — landmarks, alt text, single h1, keyboard navigation. No full WCAG 2.1 audit, no screen-reader-specific E2E.
 14. **Performance numbers are sandbox baselines** — in-memory MongoDB, shared 2-vCPU sandbox, read/auth-heavy mix, 500-VU level intentionally skipped. They are comparable baselines for the DevOps phase, not production capacity guarantees.
 15. **`userOrders`/`allOrders` pagination detail** — `allOrders` computes `totalPages` from the raw `limit` while clamping the actual page size to 100; harmless for current clients, noted for a future cleanup.

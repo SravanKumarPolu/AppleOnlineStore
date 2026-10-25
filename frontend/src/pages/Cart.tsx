@@ -183,6 +183,7 @@ const Cart: React.FC = () => {
                           <div className="flex items-center gap-2">
                             <motion.button
                               onClick={() => updateQuantity(item._id, item.color, Math.max(1, item.quantity - 1))}
+                              aria-label={`Decrease quantity of ${productData?.name ?? 'item'}`}
                               className="w-10 h-10 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg flex items-center justify-center transition-colors"
                               whileHover={{ scale: 1.1 }}
                               whileTap={{ scale: 0.9 }}
@@ -207,6 +208,7 @@ const Cart: React.FC = () => {
                             
                             <motion.button
                               onClick={() => updateQuantity(item._id, item.color, item.quantity + 1)}
+                              aria-label={`Increase quantity of ${productData?.name ?? 'item'}`}
                               className="w-10 h-10 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg flex items-center justify-center transition-colors"
                               whileHover={{ scale: 1.1 }}
                               whileTap={{ scale: 0.9 }}

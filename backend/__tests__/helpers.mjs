@@ -2,6 +2,7 @@
 // In-memory MongoDB (mongodb-memory-server is already a devDependency) +
 // fixtures that match the real model schemas.
 import crypto from 'node:crypto';
+import net from 'node:net';
 import bcrypt from 'bcrypt';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import mongoose from 'mongoose';
@@ -13,18 +14,80 @@ import orderModel from '../models/orderModel.js';
 // Debian 12/13 hosts can only fetch MongoDB >= 7.0.3 binaries.
 const MONGOMS_VERSION = process.env.MONGOMS_VERSION || '7.0.14';
 
-export async function startTestDb() {
-  const mongod = await MongoMemoryServer.create({
-    binary: { version: MONGOMS_VERSION },
+// Pick the mongod port explicitly instead of letting the library choose.
+// mongod also opens a legacy HTTP interface on <port + 1000>; letting it pick
+// an arbitrary low port produced a real, intermittent suite failure in this
+// audit ("Port 8081 already in use" because a container on the host owns
+// 8081). The 28000–28999 range keeps both ports clear of common host
+// services and of Docker's defaults.
+const TEST_DB_PORT_RANGE = { start: 28000, size: 1000 };
+
+const isPortFree = (port) =>
+  new Promise((resolve) => {
+    const probe = net.createServer();
+    probe.once('error', () => resolve(false));
+    probe.once('listening', () => probe.close(() => resolve(true)));
+    probe.listen(port, '127.0.0.1');
   });
-  const uri = mongod.getUri('novacart-test');
-  await mongoose.connect(uri);
-  return { mongod, uri };
+
+const pickMongoPort = async () => {
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    const port = TEST_DB_PORT_RANGE.start + crypto.randomInt(0, TEST_DB_PORT_RANGE.size);
+    if (await isPortFree(port)) return port;
+  }
+  return null; // fall back to the library's own allocation
+};
+
+export async function startTestDb() {
+  let lastError;
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const port = await pickMongoPort();
+    let mongod;
+    try {
+      mongod = await MongoMemoryServer.create({
+        binary: { version: MONGOMS_VERSION },
+        ...(port ? { instance: { port } } : {}),
+      });
+      const uri = mongod.getUri('novacart-test');
+      await mongoose.connect(uri);
+
+      // Mirror the production startup contract (config/mongodb.js): every
+      // declared index exists before the first request. Mongoose otherwise
+      // builds them in the background, which let the idempotency race spec
+      // write five orders under one unique key (the unique partial index did
+      // not exist yet). Tests must exercise the same guarantees as runtime.
+      await Promise.all(Object.values(mongoose.models).map((model) => model.init()));
+
+      return { mongod, uri };
+    } catch (error) {
+      lastError = error;
+      if (mongoose.connection.readyState !== 0) {
+        await mongoose.disconnect().catch(() => {});
+      }
+      // A failed start must not leave mongod running: an orphaned instance
+      // holds its port and keeps the Jest process alive after the run.
+      if (mongod) {
+        await mongod.stop().catch(() => {});
+      }
+      const message = String(error?.message || error);
+      const retryable = /already in use|EADDRINUSE/i.test(message);
+      if (!retryable || attempt === 3) throw error;
+    }
+  }
+
+  throw lastError;
 }
 
-export async function stopTestDb({ mongod }) {
-  await mongoose.disconnect();
-  await mongod.stop();
+// Tolerate a failed start: specs call this from afterAll, and a teardown must
+// never mask the original startup error with "cannot destructure mongod".
+export async function stopTestDb(instance) {
+  if (mongoose.connection.readyState !== 0) {
+    await mongoose.disconnect();
+  }
+  if (instance?.mongod) {
+    await instance.mongod.stop();
+  }
 }
 
 export function makeAdminToken(email = 'admin@test.local') {

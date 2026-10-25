@@ -123,7 +123,9 @@ const userSchema = new mongoose.Schema({
 // Create indexes for better performance
 userSchema.index({ createdAt: 1 });
 userSchema.index({ isActive: 1 });
-userSchema.index({ email: 1 });
+// NOTE: `email` is declared `unique: true` on the field itself, which already
+// creates the `email_1` index. Re-declaring it here produced a same-name index
+// with conflicting options and broke Model.init() (see config/mongodb.js).
 userSchema.index({ passwordResetToken: 1 });
 
 // Pre-save middleware to validate password strength
