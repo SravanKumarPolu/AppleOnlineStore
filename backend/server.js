@@ -20,7 +20,7 @@ import { createShutdownManager } from './utils/shutdownManager.js';
 import { redactError } from './utils/redact.js';
 import {
   startReservationSweeper,
-  releaseExpiredReservations,
+  runInventorySweep,
   DEFAULT_SWEEP_INTERVAL_MS,
 } from './services/reservationService.js';
 
@@ -112,11 +112,12 @@ async function startServer() {
 
     await connectDB();          // required: fail-fast if unreachable
 
-    // Release inventory held by abandoned PayPal checkouts. One sweep at boot
-    // (so a restart heals stale holds) and then on an interval. The timer is
-    // unref'd; the stop handle is registered for graceful shutdown below.
-    await releaseExpiredReservations().catch((error) => {
-      console.error('Startup reservation sweep failed:', redactError(error));
+    // Release inventory held by abandoned PayPal checkouts, and retry any
+    // restoration that previously failed. One sweep at boot (so a restart
+    // heals stale holds AND owed stock credits) and then on an interval. The
+    // timer is unref'd; the stop handle is registered for graceful shutdown.
+    await runInventorySweep().catch((error) => {
+      console.error('Startup inventory sweep failed:', redactError(error));
     });
     stopReservationSweeper = startReservationSweeper({
       intervalMs: Number(process.env.RESERVATION_SWEEP_INTERVAL_MS) || DEFAULT_SWEEP_INTERVAL_MS,

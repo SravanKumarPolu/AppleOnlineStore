@@ -1,7 +1,30 @@
 import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import userModel from '../models/userModel.js';
+import orderModel from '../models/orderModel.js';
 import { buildAllowedOrigins } from '../config/allowedOrigins.js';
+
+const OBJECT_ID_RE = /^[0-9a-fA-F]{24}$/;
+
+/**
+ * Personal-room key for a user reference.
+ *
+ * Callers pass either a raw ObjectId/string (order docs straight from the DB)
+ * or a POPULATED user object (`userId: { _id, name, email }`). Stringifying the
+ * latter yields "[object Object]", which silently addressed a room nobody had
+ * joined — so a populated order update never reached the shopper.
+ */
+function userRoom(userId) {
+  if (!userId) return null;
+  if (typeof userId === 'object') {
+    // Raw BSON ObjectId (raw order document): `.id` is a Buffer, so stringify
+    // the hex form explicitly instead of decoding the buffer as UTF-8.
+    if (typeof userId.toHexString === 'function') return `user_${userId.toHexString()}`;
+    const id = userId._id ?? userId.id;
+    return id ? `user_${String(id)}` : null;
+  }
+  return `user_${String(userId)}`;
+}
 
 class SocketService {
   constructor() {
@@ -61,7 +84,6 @@ class SocketService {
     this.setupEventHandlers();
     console.log('🔌 WebSocket server initialized');
   }
-
   setupEventHandlers() {
     this.io.on('connection', (socket) => {
       console.log(`🔗 User connected: ${socket.userEmail} (${socket.userRole})`);
@@ -83,61 +105,105 @@ class SocketService {
         socket.join('admin_room');
       }
 
+      // Order rooms are PRIVATE: order updates carry the full order document
+      // (items, shipping address, payment state). A socket may only join an
+      // order room it can prove it owns — an ObjectId is not a secret, so
+      // "the id is hard to guess" is not authorization. Admin joins are
+      // separately gated by role. `authorizedOrderRooms` is the allow-list the
+      // typing relays consult too.
+      const authorizedOrderRooms = new Set();
+
       // Handle disconnection
       socket.on('disconnect', () => {
         console.log(`🔌 User disconnected: ${socket.userEmail}`);
         
-        // Remove from connected users
-        if (socket.userId) {
+        // Only drop the mapping when it still points at THIS socket: a
+        // shopper with two tabs open must stay "connected" when one closes.
+        if (socket.userId && this.connectedUsers.get(socket.userId) === socket.id) {
           this.connectedUsers.delete(socket.userId);
-        } else if (socket.userRole === 'admin') {
+        } else if (socket.userRole === 'admin' && this.connectedUsers.get('admin') === socket.id) {
           this.connectedUsers.delete('admin');
         }
+        authorizedOrderRooms.clear();
       });
 
       // Handle join order room (for specific order updates)
-      socket.on('join_order_room', (orderId) => {
-        socket.join(`order_${orderId}`);
-        console.log(`📦 User ${socket.userEmail} joined order room: ${orderId}`);
+      socket.on('join_order_room', async (orderId) => {
+        const id = String(orderId || '');
+        if (!OBJECT_ID_RE.test(id)) return;
+
+        if (socket.userRole === 'admin') {
+          socket.join(`order_${id}`);
+          authorizedOrderRooms.add(id);
+          console.log(`👨‍💼 Admin joined order room: ${id}`);
+          return;
+        }
+
+        if (!socket.userId) return;
+
+        try {
+          const owned = await orderModel.exists({ _id: id, userId: socket.userId });
+          if (!owned) {
+            console.warn(
+              `🚫 Rejected order-room join: user ${socket.userId} does not own order ${id}`
+            );
+            return;
+          }
+          socket.join(`order_${id}`);
+          authorizedOrderRooms.add(id);
+          console.log(`📦 User ${socket.userEmail} joined order room: ${id}`);
+        } catch (error) {
+          console.error('Order room authorization failed:', error?.message || error);
+        }
       });
 
       // Handle leave order room
       socket.on('leave_order_room', (orderId) => {
-        socket.leave(`order_${orderId}`);
-        console.log(`📦 User ${socket.userEmail} left order room: ${orderId}`);
+        const id = String(orderId || '');
+        socket.leave(`order_${id}`);
+        authorizedOrderRooms.delete(id);
+        console.log(`📦 User ${socket.userEmail} left order room: ${id}`);
       });
 
       // Handle admin join order room
       socket.on('admin_join_order', (orderId) => {
         if (socket.userRole === 'admin') {
-          socket.join(`order_${orderId}`);
-          console.log(`👨‍💼 Admin joined order room: ${orderId}`);
+          const id = String(orderId || '');
+          socket.join(`order_${id}`);
+          authorizedOrderRooms.add(id);
+          console.log(`👨‍💼 Admin joined order room: ${id}`);
         }
       });
 
       // Handle admin leave order room
       socket.on('admin_leave_order', (orderId) => {
         if (socket.userRole === 'admin') {
-          socket.leave(`order_${orderId}`);
-          console.log(`👨‍💼 Admin left order room: ${orderId}`);
+          const id = String(orderId || '');
+          socket.leave(`order_${id}`);
+          authorizedOrderRooms.delete(id);
+          console.log(`👨‍💼 Admin left order room: ${id}`);
         }
       });
 
       // Handle user typing in chat (if implemented later)
       socket.on('typing', (data) => {
-        socket.to(`order_${data.orderId}`).emit('user_typing', {
+        const id = String(data?.orderId || '');
+        if (!authorizedOrderRooms.has(id)) return;
+        socket.to(`order_${id}`).emit('user_typing', {
           userId: socket.userId,
           userEmail: socket.userEmail,
-          orderId: data.orderId
+          orderId: id
         });
       });
 
       // Handle stop typing
       socket.on('stop_typing', (data) => {
-        socket.to(`order_${data.orderId}`).emit('user_stop_typing', {
+        const id = String(data?.orderId || '');
+        if (!authorizedOrderRooms.has(id)) return;
+        socket.to(`order_${id}`).emit('user_stop_typing', {
           userId: socket.userId,
           userEmail: socket.userEmail,
-          orderId: data.orderId
+          orderId: id
         });
       });
     });
@@ -169,8 +235,9 @@ class SocketService {
   // also survive reconnects and fan out to multiple sessions, which the
   // single-socket map could not.
   sendOrderUpdateToUser(userId, orderData) {
-    if (!userId) return;
-    this.#emitToRoom(`user_${String(userId)}`, 'order_updated', orderData);
+    const room = userRoom(userId);
+    if (!room) return;
+    this.#emitToRoom(room, 'order_updated', orderData);
   }
 
   // Send order update to order room (for real-time collaboration)

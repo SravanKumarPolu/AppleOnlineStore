@@ -68,10 +68,19 @@ app.use(
 );
 
 // Rate limiting
+//
+// RATE_LIMIT_MAX exists so a DISPOSABLE load-test target can raise the ceiling
+// without changing the production default. Leave it unset in real deployments:
+// 1000 requests / 15 min / IP is the shipped policy.
+const RATE_LIMIT_MAX =
+  Number.isFinite(Number(process.env.RATE_LIMIT_MAX)) && Number(process.env.RATE_LIMIT_MAX) > 0
+    ? Number(process.env.RATE_LIMIT_MAX)
+    : 1000;
+
 app.use(
   rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 1000,
+    max: RATE_LIMIT_MAX,
     message: { success: false, message: 'Too many requests from this IP, try again later.' },
     standardHeaders: true,
     legacyHeaders: false,
@@ -81,9 +90,15 @@ app.use(
   })
 );
 
+const AUTH_RATE_LIMIT_MAX =
+  Number.isFinite(Number(process.env.AUTH_RATE_LIMIT_MAX)) &&
+  Number(process.env.AUTH_RATE_LIMIT_MAX) > 0
+    ? Number(process.env.AUTH_RATE_LIMIT_MAX)
+    : 20;
+
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20,
+  max: AUTH_RATE_LIMIT_MAX,
   message: { success: false, message: 'Too many login attempts, try again later.' },
   standardHeaders: true,
   legacyHeaders: false,

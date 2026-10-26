@@ -14,6 +14,42 @@ import AxeBuilder from '@axe-core/playwright';
 const SEVERITIES_THAT_FAIL = new Set(['critical', 'serious']);
 
 async function scan(page: import('@playwright/test').Page, label: string) {
+  // Reveal the whole page first. Product cards use `whileInView` entrance
+  // animations, so below-the-fold content sits at opacity:0 until scrolled —
+  // axe treats that as visible text with a blended colour and reports contrast
+  // failures for content the shopper has not reached yet. Scrolling through
+  // also means the scan covers the entire page, not just the first viewport.
+  await page.evaluate(async () => {
+    const step = Math.max(200, Math.floor(window.innerHeight * 0.8));
+    const height = document.body.scrollHeight;
+    for (let y = 0; y < height; y += step) {
+      window.scrollTo(0, y);
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    }
+    window.scrollTo(0, 0);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  });
+
+  // framer-motion fades/slides page content in on mount. Axe samples the
+  // RENDERED colours, including the in-flight opacity, so scanning mid-fade
+  // reports contrast failures that do not exist once the page settles (this
+  // produced engine-dependent false positives). Force every animation to its
+  // final state, neutralise CSS transitions, then scan the settled UI.
+  await page.addStyleTag({
+    content:
+      '*,*::before,*::after{animation-duration:0.001s!important;animation-delay:0s!important;transition-duration:0.001s!important;transition-delay:0s!important}',
+  });
+  await page.evaluate(() => {
+    for (const animation of document.getAnimations?.() ?? []) {
+      try {
+        animation.finish();
+      } catch {
+        // Infinite animations cannot be finished; they are not contrast-bearing.
+      }
+    }
+  });
+  await page.waitForTimeout(300);
+
   const results = await new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
     .analyze();

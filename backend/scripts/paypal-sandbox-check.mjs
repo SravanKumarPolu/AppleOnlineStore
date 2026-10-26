@@ -55,6 +55,22 @@ function buildClient() {
   return new paypal.core.PayPalHttpClient(environment);
 }
 
+/**
+ * This helper exists to validate SANDBOX behaviour. With PAYPAL_ENV=live it
+ * would otherwise create (and, on --capture, charge) a REAL payment — exactly
+ * the accident it is meant to prevent. Any step that talks to PayPal is
+ * therefore refused unless the environment is sandbox.
+ */
+function assertSandboxOnly(step) {
+  if (isLivePayPal()) {
+    blocked(
+      `${step} targets the SANDBOX only, but PAYPAL_ENV=live is configured. ` +
+        'Unset PAYPAL_ENV (or set it to sandbox) and use sandbox credentials. ' +
+        'This helper refuses to create or capture live payments.'
+    );
+  }
+}
+
 /** Mirrors the payload controllers/orderController.placeOrderPayPal builds. */
 function orderRequest({ total = 11.0, currency = 'USD' } = {}) {
   const request = new paypal.orders.OrdersCreateRequest();
@@ -113,6 +129,7 @@ async function check() {
 }
 
 async function create() {
+  assertSandboxOnly('--create');
   const client = buildClient();
   console.log('→ Creating a real PayPal order…');
   const response = await client.execute(orderRequest());
@@ -129,6 +146,7 @@ async function create() {
 }
 
 async function capture(orderId) {
+  assertSandboxOnly('--capture');
   if (!orderId) fail('--capture needs a PayPal order id (printed by --create)');
   const client = buildClient();
   const request = new paypal.orders.OrdersCaptureRequest(orderId);

@@ -96,11 +96,11 @@ All four record analytics (`add_to_cart` / `remove_from_cart`).
 |---|---|---|---|---|
 | 1 | `POST /` | `authUser` | `placeOrder` | **COD/Card order creation.** Body `{items[], address, paymentMethod}` — `paymentMethod` must be one of `COD \| Card` (400 with an explicit message otherwise; `PayPal` is rejected here on purpose so PayPal orders carry a `paypalOrderId` the webhook can match). Server computes subtotal + $10 shipping, `currency:'USD'`, saves `paymentStatus:'pending'`, clears `cartData`, pushes `orders`, emits socket events, records purchase analytics. Storefront callers since the 2026-10-24 K-1 fix: `PlaceOrder.tsx` COD (`'COD'`) and Card (`'Card'`) paths. Card = gateway-less recorded intent (store collects manually) |
 | 2 | `POST /paypal/create` | `authUser` | `placeOrderPayPal` | Body items+address. Creates the PayPal order + a pending local order (`paypalOrderId` stored, stock reserved, `reservationExpiresAt` = now + `PAYPAL_RESERVATION_TTL_MS`, default 30 min). Returns PayPal order id for the JS SDK. Abandoned holds are released by the sweep (`RESERVATION_SWEEP_INTERVAL_MS`, default 5 min) |
-| 3 | `POST /paypal/capture` | `authUser` | `capturePayPalPayment` | Body `{orderId(PayPal), localOrderId?}`. Captures via PayPal, **verifies amount(cents)/currency/identity** → 200 `paymentStatus:'completed'` + ids; **409** on mismatch (order untouched, alert logged); sweeps earlier `unresolved` webhook events for the same capture |
+| 3 | `POST /paypal/capture` | `authUser` | `capturePayPalPayment` | Body `{orderID(PayPal)}`. Captures via PayPal, **verifies amount(cents)/currency/identity** → 200 `paymentStatus:'completed'` + ids; **409** on mismatch (order untouched, alert logged); **409 `ORDER_NOT_PAYABLE`** when the order was already cancelled/refunded (refused **before** the gateway call); **409 `CAPTURE_REQUIRES_RECONCILIATION`** when cancellation/refund landed while the capture was in flight (capture id is recorded for refund, order never marked paid — alert logged); sweeps earlier `unresolved` webhook events for the same capture |
 | 4 | `POST /paypal/webhook` | **public, signature-verified** | `handlePayPalWebhook` | PayPal→server only. Fail-closed verification; idempotency state machine; see §6.1 |
 | 5 | `POST /userorders` | `authUser` | `userOrders` | Body `{}` (userId from token). 200 `{orders}` |
 | 6 | `PUT /status` | `authAdmin` | `updateStatus` | Body `{orderId, status}`; status must be one of the 6 `ORDER_STATUSES` (400 otherwise; DB untouched). 'Delivered' stamps `deliveredAt`. Fans out `order_updated` via Socket.IO |
-| 6b | `POST /refund` | `authAdmin` | `refundOrder` | Body `{orderId, reason?}`. Only a `completed` payment can be refunded (400 otherwise); repeating it is idempotent (`alreadyRefunded:true`). PayPal orders are refunded through the PayPal Refunds API (`502` and order untouched on gateway failure / unconfirmed status; `409` if the order has no capture id). COD/Card orders are recorded as `refundMethod:'manual'` — the store returns the money out-of-band. Either way: `paymentStatus:'refunded'`, `refundedAt/refundId/refundReason` set, **reserved stock restored exactly once** and both parties notified over Socket.IO |
+| 6b | `POST /refund` | `authAdmin` | `refundOrder` | Body `{orderId, reason?}`. Full refunds only. Only a `completed` payment can be refunded (400 otherwise). The refund **intent is claimed atomically before the gateway call**, so concurrent/duplicate requests cannot issue two refunds (`409` for the loser; `409 REFUND_PENDING_RECONCILIATION` while a refund is pending/indeterminate). PayPal path: `COMPLETED` → 200, `paymentStatus:'refunded'`, `refundStatus:'completed'`; `PENDING` → **202**, `paymentStatus` stays `completed`, `refundStatus:'pending'` (money not returned yet); definitive 4xx rejection → 502 `PAYPAL_REFUND_REJECTED`, `refundStatus:'failed'` (safe to retry); timeout/5xx/unknown status → 502 `PAYPAL_REFUND_INDETERMINATE`, remains `pending` for reconciliation (`reconcilable:true`). `409` if the order has no capture id. COD/Card orders are recorded immediately as `refundMethod:'manual'`. Inventory is returned **only on completion**, exactly once per item, through the durable release (`inventoryRestoration`); both parties are notified over Socket.IO |
 | 7 | `GET /user` | `authUser` | `userOrders` | Duplicate of #5 via GET |
 | 8 | `GET /all` | `authAdmin` | `allOrders` | Admin listing incl. `filters.orderStatuses` for the UI |
 | 9 | `GET /debug` | `authAdmin` | `debugOrders` | Admin-only recent-orders dump (PII — admin only since Phase 1) |
@@ -118,8 +118,28 @@ Responses carry operational meaning for PayPal's redelivery:
 | Unresolved capture, budget exhausted | 200 `no_matching_order_retry_exhausted` | stops — **ops alert logged; manual follow-up required** |
 
 Non-`PAYMENT.CAPTURE.COMPLETED` verified events are acknowledged with result
-`ignored_event_type`. Verified captures never modify refunded orders and
+`ignored_event_type`, **except** `PAYMENT.CAPTURE.REFUNDED`, which reconciles
+the refund lifecycle (below). Verified captures never modify refunded orders and
 never apply cross-order grafts (`capture_order_mismatch`).
+
+### 6.2 Refund reconciliation (`PAYMENT.CAPTURE.REFUNDED`)
+
+A refund is only real when PayPal reports `COMPLETED`. The signed refund event
+finishes a refund left in the conservative `pending` state (PENDING result or an
+indeterminate timeout), so it can reach a truthful terminal state without an
+operator.
+
+- Matching: recorded `refundId`, or the capture id in the refund resource's
+  `up` link (`/payments/captures/<captureId>/refund`) — which also covers a
+  refund whose id was lost to a crash after the gateway call.
+- Guard: the refund amount **and** currency must equal the order total before
+  any write. A partial/foreign-currency refund is flagged
+  (`refund_amount_currency_mismatch`), never applied as a full refund.
+- `COMPLETED` → `paymentStatus:'refunded'`, `refundStatus:'completed'`, inventory
+  returned exactly once (`refund_completed`). `PENDING` → stays pending
+  (`refund_pending`). `FAILED`/`CANCELLED`/`DENIED` → `refundStatus:'failed'`,
+  order stays paid and retryable (`refund_failed`). Unknown order/status →
+  terminal `unresolved` + ops alert (no retry storm).
 
 ## 7. `/api/category` — categoryRouter
 

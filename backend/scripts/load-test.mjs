@@ -23,8 +23,12 @@ import { dirname, join } from 'node:path';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BACKEND_DIR = join(HERE, '..');
 const REPO_ROOT = join(BACKEND_DIR, '..');
-const BASE = process.env.LOAD_TEST_BASE || 'http://localhost:3001';
+// Dedicated port: the harness must never accidentally probe a developer's
+// running server (or a real database) that happens to occupy 3001.
+const PORT = process.env.LOAD_TEST_PORT || '3101';
+const BASE = process.env.LOAD_TEST_BASE || `http://127.0.0.1:${PORT}`;
 const OUT = process.env.LOAD_TEST_OUT || join(REPO_ROOT, 'docs', 'testing', 'load-results.json');
+const CHECKOUT_SCENARIO = 'POST /api/orders (checkout write)';
 
 const args = process.argv.slice(2);
 const argOf = (name, def) => {
@@ -76,6 +80,59 @@ function percentile(sorted, p) {
   if (!sorted.length) return 0;
   const idx = Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1);
   return sorted[Math.max(0, idx)];
+}
+
+/** POST + parse JSON (used for fixture/stock verification). */
+function postJson(path, body) {
+  return new Promise((resolve) => {
+    const payload = JSON.stringify(body);
+    const req = http.request(
+      `${BASE}${path}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+        timeout: 10000,
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(data));
+          } catch {
+            resolve({});
+          }
+        });
+      }
+    );
+    req.on('error', () => resolve({}));
+    req.write(payload);
+    req.end();
+  });
+}
+
+/**
+ * A load run must only touch a disposable loopback instance. The harness boots
+ * its own in-memory backend on PORT, but LOAD_TEST_BASE could point anywhere —
+ * refuse anything that is not loopback unless explicitly overridden.
+ */
+function assertLocalTarget(base) {
+  let hostname;
+  try {
+    hostname = new URL(base).hostname;
+  } catch {
+    console.error(`⛔ Invalid LOAD_TEST_BASE: ${base}`);
+    process.exit(1);
+  }
+  const loopback = ['localhost', '127.0.0.1', '::1', '[::1]'];
+  if (!loopback.includes(hostname) && !args.includes('--allow-remote')) {
+    console.error(
+      `⛔ Refusing to load-test ${base}: only a loopback/disposable backend is allowed.`
+    );
+    console.error('   Pass --allow-remote only for a dedicated non-production load target.');
+    process.exit(1);
+  }
+  return hostname;
 }
 
 function procStats(pid) {
@@ -143,6 +200,9 @@ async function runLevel(level, vu, scenarios, tokens) {
     const lats = rs.map((r) => r.ms).sort((a, b) => a - b);
     perScenario[name] = {
       count: rs.length,
+      success: rs.filter((r) => r.status >= 200 && r.status < 300).length,
+      success_rate: +((rs.filter((r) => r.status >= 200 && r.status < 300).length / rs.length) * 100).toFixed(2),
+      client_errors: rs.filter((r) => r.status >= 400 && r.status < 500).length,
       rps: +(rs.length / wall).toFixed(1),
       avg_ms: +(lats.reduce((a, b) => a + b, 0) / lats.length).toFixed(1),
       p50_ms: +percentile(lats, 50).toFixed(1),
@@ -159,6 +219,13 @@ async function runLevel(level, vu, scenarios, tokens) {
     total_requests: results.length,
     throughput_rps: +(results.length / wall).toFixed(1),
     error_rate: +((errors / Math.max(1, results.length)) * 100).toFixed(2),
+    // 4xx are not server faults, but they must be visible: an exhausted stock
+    // or a rejected checkout shows up here, never as silent success.
+    client_error_rate: +(
+      (results.filter((r) => r.status >= 400 && r.status < 500).length /
+        Math.max(1, results.length)) *
+      100
+    ).toFixed(2),
     latency: {
       avg_ms: +(latencies.reduce((a, b) => a + b, 0) / Math.max(1, latencies.length)).toFixed(1),
       p50_ms: +percentile(latencies, 50).toFixed(1),
@@ -172,6 +239,8 @@ async function runLevel(level, vu, scenarios, tokens) {
 // ---------------- main ----------------
 async function main() {
   console.log('=== NovaCart Load Test Harness ===');
+  assertLocalTarget(BASE);
+  console.log(`Target: ${BASE} (disposable in-memory backend)`);
   // Levels actually executed (dedup + cap), printed from the same array the
   // loop uses so the banner can never advertise a level that is not run.
   const LEVELS = [1, 10, 50, 100, MAX_VU].filter((v, i, a) => a.indexOf(v) === i && v <= MAX_VU);
@@ -182,7 +251,19 @@ async function main() {
   const server = spawn('node', ['scripts/e2e-server.mjs'], {
     cwd: BACKEND_DIR,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env },
+    // Dedicated port + deep stock: without E2E_STOCK the seeded catalog has 10
+    // units per product and the 10% checkout-write mix exhausts it in seconds,
+    // turning most writes into 400s (which the error rate ignores). The mix
+    // must measure serving capacity, not inventory exhaustion.
+    env: {
+      ...process.env,
+      E2E_PORT: PORT,
+      E2E_STOCK: process.env.E2E_STOCK || '1000000',
+      // The per-IP limiter (1000/15min) would otherwise turn almost every
+      // request into a 429 within the first second and the run would measure
+      // the limiter, not the app. Raised ONLY on this disposable instance.
+      RATE_LIMIT_MAX: process.env.RATE_LIMIT_MAX || '100000000',
+    },
   });
   let serverLogs = '';
   server.stdout.on('data', (d) => (serverLogs += d));
@@ -265,6 +346,12 @@ async function main() {
   const tokens = { user: register.token, admin: adminToken };
   console.log('[2/4] Fixtures ready (shopper token, admin token, product).');
 
+  // Baseline for the post-load stock-consistency assertion.
+  const initialProduct = await postJson('/api/product/single', {
+    productId: String(product._id),
+  });
+  const initialStock = initialProduct?.product?.stockQuantity ?? null;
+
   // 3. Scenario mix — weights approximate a real storefront session: mostly
   //    catalog reads, some authenticated reads, and a real checkout write
   //    (order creation + atomic stock reservation + user history + analytics).
@@ -308,6 +395,8 @@ async function main() {
   console.log('[3/4] Running load levels ...');
   const levelsOut = [];
   const resourceSamples = [];
+  let checkoutSuccesses = 0;
+  let checkoutAttempts = 0;
   for (const vu of LEVELS) {
     const before = procStats(serverPid);
     const t0 = Date.now();
@@ -324,10 +413,14 @@ async function main() {
     });
     resourceSamples.push({ vu, rss_mb: res.server_rss_mb, cpu_pct: cpuPct });
     levelsOut.push(res);
+    const checkout = res.scenarios[CHECKOUT_SCENARIO];
+    checkoutSuccesses += checkout?.success || 0;
+    checkoutAttempts += checkout?.count || 0;
     console.log(
       `  VU=${String(vu).padStart(3)} → ${res.total_requests} req | ${res.throughput_rps} rps | ` +
       `avg ${res.latency.avg_ms}ms | p50 ${res.latency.p50_ms} | p95 ${res.latency.p95_ms} | ` +
-      `p99 ${res.latency.p99_ms} | err ${res.error_rate}% | rss ${res.server_rss_mb}MB | cpu ${cpuPct === null ? 'n/a (non-Linux host)' : `${cpuPct}%`}`
+      `p99 ${res.latency.p99_ms} | err ${res.error_rate}% | 4xx ${res.client_error_rate}% | ` +
+      `rss ${res.server_rss_mb}MB | cpu ${cpuPct === null ? 'n/a (non-Linux host)' : `${cpuPct}%`}`
     );
 
     // Escalation guard.
@@ -346,6 +439,16 @@ async function main() {
   const recoveryOk = recovery.every((r) => r.status === 200);
   console.log(`  Recovery: /health/ready avg ${recoveryAvg}ms, all-200=${recoveryOk}`);
 
+  // Stock consistency: every successful checkout decrements exactly one unit
+  // of the product under load. Any drift means a lost update or a double
+  // reservation that the level metrics would not show.
+  const finalProduct = await postJson('/api/product/single', {
+    productId: String(product._id),
+  });
+  const finalStock = finalProduct?.product?.stockQuantity ?? null;
+  const expectedFinal = initialStock === null ? null : initialStock - checkoutSuccesses;
+  const stockConsistent = expectedFinal === null ? null : finalStock === expectedFinal;
+
   server.kill('SIGTERM');
   const summary = {
     generated_at: new Date().toISOString(),
@@ -356,17 +459,29 @@ async function main() {
       1024 ** 3
     ).toFixed(1)} GB RAM, Node ${process.version}, in-memory MongoDB`,
     scenario_mix: scenarios.map((sc) => ({ name: sc.name, weight: sc.weight ?? 1 })),
+    checkout: {
+      attempts: checkoutAttempts,
+      successful_orders: checkoutSuccesses,
+      success_rate: checkoutAttempts ? +((checkoutSuccesses / checkoutAttempts) * 100).toFixed(2) : null,
+    },
+    stock_consistency: {
+      initial_stock: initialStock,
+      final_stock: finalStock,
+      expected_final: expectedFinal,
+      consistent: stockConsistent,
+    },
     load_notes: [
       'POST /api/orders exercises the real checkout write path (server-side pricing, atomic stock reservation, user history, analytics).',
       'PayPal network calls are NOT part of the mix: capture/webhook latency is dominated by the external provider. The app-side work per payment is what this mix measures.',
     ],
-    resource_sampling: 'RSS/CPU are sampled from /proc and are 0 on non-Linux hosts',
+    resource_sampling: 'RSS is sampled from /proc (Linux) or ps (macOS); CPU is null on non-Linux hosts, never reported as 0',
     duration_per_level_s: DURATION,
     levels: levelsOut,
     recovery: { health_ready_avg_ms: recoveryAvg, all_200: recoveryOk },
     notes: [
       'Extreme load (500 VU) intentionally NOT executed: sandbox has 2 vCPU/4GB shared with the test harness itself.',
-      'Write-heavy order placement runs against a fixture product with a very large stock so the mix measures serving capacity, not inventory exhaustion.',
+      'Write-heavy order placement runs against a fixture product seeded with E2E_STOCK units (1,000,000 by default) so the mix measures serving capacity, not inventory exhaustion.',
+      'Per-scenario 4xx counts and success rates are reported: an exhausted stock or rejected checkout can never look like success.',
       'CPU percent is relative to ONE core (200% = both cores saturated).',
     ],
   };

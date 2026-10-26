@@ -109,6 +109,11 @@ const child = spawn(process.execPath, ['server.js'], {
     PAYPAL_CLIENT_SECRET: 'e2e-paypal-client-secret',
     PAYPAL_WEBHOOK_ID: 'e2e-paypal-webhook-id',
     APP_NAME: 'NovaCart',
+    // The browser suite registers/logs in many users from ONE loopback IP;
+    // the production limiter (20 auth attempts / 15 min) would 429 the later
+    // engines and make the matrix unreproducible. Raised only here.
+    RATE_LIMIT_MAX: process.env.RATE_LIMIT_MAX || '1000000',
+    AUTH_RATE_LIMIT_MAX: process.env.AUTH_RATE_LIMIT_MAX || '1000000',
     // Overridable so the whole stack can move off the default ports when a
     // developer already has the app running (playwright.config.ts passes it).
     FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:5173',

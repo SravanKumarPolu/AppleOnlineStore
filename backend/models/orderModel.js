@@ -37,6 +37,13 @@ const orderItemSchema = new mongoose.Schema({
   color: {
     type: String,
     required: true
+  },
+  // Durable inventory bookkeeping (services/reservationService.js). Set only
+  // AFTER this item's units have been credited back to the catalog, so a
+  // failed credit is retried and a successful one is never applied twice.
+  stockRestored: {
+    type: Boolean,
+    default: false
   }
 }, { _id: false });
 
@@ -115,6 +122,21 @@ const orderSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+  // Durable release/restoration obligation. `stockReserved` is the atomic
+  // claim flag; this object records whether the units actually made it back
+  // into the catalog, so a failed product update is retried instead of being
+  // silently dropped. See services/reservationService.js.
+  inventoryRestoration: {
+    status: {
+      type: String,
+      enum: ['none', 'pending', 'completed', 'reconciliation_required'],
+      default: 'none'
+    },
+    attempts: { type: Number, default: 0 },
+    lastError: { type: String, default: null },
+    startedAt: { type: Date, default: null },
+    completedAt: { type: Date, default: null }
+  },
   // AF-1 idempotency: client-generated per-checkout-attempt key. Absent/
   // null on legacy orders and on clients that do not send the header.
   idempotencyKey: {
@@ -148,6 +170,30 @@ const orderSchema = new mongoose.Schema({
   refundMethod: {
     type: String,
     enum: ['paypal', 'manual', null],
+    default: null
+  },
+  // Refund lifecycle, separate from paymentStatus on purpose:
+  //   null      — no refund requested
+  //   'pending' — a refund was requested and PayPal has NOT confirmed it
+  //               (PENDING result, or an indeterminate transport failure).
+  //               Blocks a second automatic refund until an operator
+  //               reconciles it; paymentStatus stays 'completed' because the
+  //               money has not been returned yet.
+  //   'completed' — refund confirmed (gateway COMPLETED or a recorded manual
+  //               refund). paymentStatus becomes 'refunded'.
+  //   'failed'  — PayPal definitively rejected the request before creating a
+  //               refund. Safe to retry.
+  refundStatus: {
+    type: String,
+    enum: ['pending', 'completed', 'failed', null],
+    default: null
+  },
+  refundAttempts: {
+    type: Number,
+    default: 0
+  },
+  refundLastError: {
+    type: String,
     default: null
   },
   refundReason: {
@@ -201,6 +247,8 @@ orderSchema.index(
 orderSchema.index({ createdAt: -1 });
 // Sweep index: "pending PayPal orders whose reservation has expired".
 orderSchema.index({ paymentStatus: 1, stockReserved: 1, reservationExpiresAt: 1 });
+// Reconciliation index: restorations still owed after a failed credit/crash.
+orderSchema.index({ 'inventoryRestoration.status': 1 });
 
 // Instance method to update order status
 orderSchema.methods.updateStatus = function(newStatus) {

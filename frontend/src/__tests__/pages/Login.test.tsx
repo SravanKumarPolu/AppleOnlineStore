@@ -22,8 +22,11 @@ const renderLogin = (): LoginFlow => {
   return { contextValue, loginUser, registerUser };
 };
 
+// The switch control's accessible name now starts with its visible text
+// ("Create account") so it satisfies WCAG 2.5.3 Label in Name; the mode is
+// still conveyed in the parenthetical suffix.
 const switchToSignUp = () =>
-  fireEvent.click(screen.getByRole('button', { name: 'Switch to Sign Up mode' }));
+  fireEvent.click(screen.getByRole('button', { name: /create account/i }));
 
 const fillSignUp = (name: string, email: string, password: string) => {
   const form = screen.getByRole('form', { name: 'Sign Up form' });
@@ -63,7 +66,7 @@ describe('Login page — structure and mode switching', () => {
   it('switches back to Login mode', () => {
     renderLogin();
     switchToSignUp();
-    fireEvent.click(screen.getByRole('button', { name: 'Switch to Login mode' }));
+    fireEvent.click(screen.getByRole('button', { name: /sign in instead/i }));
     expect(screen.getByRole('form', { name: 'Login form' })).toBeInTheDocument();
   });
 });

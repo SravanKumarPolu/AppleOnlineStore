@@ -31,7 +31,7 @@ those belong to the deployment layer (see [06-DEPLOYMENT.md](./06-DEPLOYMENT.md)
 |---|---|---|---|
 | `frontend/` | React 18.3.1, Vite 6, TypeScript 5.6, Tailwind 3.4 + daisyUI, framer-motion, `@paypal/react-paypal-js`, socket.io-client, vite-plugin-pwa (Workbox) | axios declared but **unused** (all calls are native `fetch`) | Vitest + @testing-library/react (10 files / 38 tests); **@playwright/test 1.64 — 2 real-browser E2E specs** (COD + Card checkout vs an orchestrated real stack); cypress/msw still declared+unused |
 | `admin/` | React 19, Vite 6, TypeScript 5.7, Tailwind 4 (CSS-first `@import` + `@plugin daisyui`), daisyUI 5, axios, react-toastify, react-router-dom 6 | No chart library (analytics are stat cards/lists) | Vitest 5 + jsdom + @testing-library/react (13 files / 70 tests — every shipped page, chrome component and API helper covered) |
-| `backend/` | Node ≥ 22 (engines), ESM (`"type":"module"`), Express 4.21, Mongoose 8, Socket.IO 4, `@paypal/checkout-server-sdk`, helmet 8, cors, express-rate-limit, express-mongo-sanitize, express-validator, multer, nodemailer, bcrypt, jsonwebtoken, cloudinary, compression, dotenv | 17 production deps, 0 unused (`audit-deps-usage.mjs`) | Jest 29 + supertest + mongodb-memory-server (36 suites / 359 tests, ESM mode) |
+| `backend/` | Node ≥ 22 (engines), ESM (`"type":"module"`), Express 4.21, Mongoose 8, Socket.IO 4, `@paypal/checkout-server-sdk`, helmet 8, cors, express-rate-limit, express-mongo-sanitize, express-validator, multer, nodemailer, bcrypt, jsonwebtoken, cloudinary, compression, dotenv | 17 production deps, 0 unused (`audit-deps-usage.mjs`) | Jest 29 + supertest + mongodb-memory-server (41 suites / 404 tests, ESM mode) |
 
 ## 3. Backend module map
 
@@ -48,26 +48,24 @@ backend/
 │                        #   analytics, category) — see 05-API_REFERENCE
 ├── controllers/         # business logic per domain
 ├── middleware/
-│   ├── auth.js          # authUser / authAdmin  ← used by most routers
-│   ├── authMiddleware.js# protect / admin      ← used by analytics router
-│   ├── adminAuth.js     # DEAD (env-compare legacy; zero importers)
+│   ├── auth.js          # authUser / authAdmin  ← the single auth stack
 │   ├── validation.js    # express-validator chains + product form-data preproc
+│   ├── debugGuard.js    # hides debug endpoints in production (404)
 │   └── multer.js        # MIME allowlist + size limits + error handler
 ├── models/              # 7 files → 11 Mongoose models (see 04-DATABASE_SCHEMA)
 ├── services/
-│   ├── socketService.js # JWT-authenticated Socket.IO; rooms; null-safe emits
+│   ├── socketService.js # JWT-authenticated Socket.IO; private rooms; null-safe emits
+│   ├── reservationService.js # PayPal hold expiry + durable, retryable stock restoration
 │   ├── emailService.js  # nodemailer; 6 templates; SMTP fallbacks
-│   ├── paypalWebhookService.js # verify-webhook-signature (fail-closed)
-│   ├── analyticsService.js     # DEAD (CJS require in ESM pkg; zero importers)
-│   └── socialAuthService.js    # DEAD (non-existent models; zero importers)
+│   └── paypalWebhookService.js # verify-webhook-signature (fail-closed)
 ├── utils/
 │   ├── redact.js        # URI/error/text redaction (canary-tested)
 │   └── shutdownManager.js # idempotent, budget-bounded graceful shutdown
 ├── scripts/             # dev utilities (run-tests.js needs live DB+SMTP;
-│                        #   populateAnalytics/seedCategories/migrateOrders…)
+│                        #   seed/migrate/load/secret-scan/sandbox-check…)
 ├── templates/email/passwordReset.html   # only on-disk template
-├── uploads/             # local multer spool dir (77 dev artifacts in repo)
-└── __tests__/           # 13 jest specs + helpers.mjs (in-memory Mongo)
+├── uploads/             # local multer spool dir (dev artifacts in repo)
+└── __tests__/           # 41 jest specs + helpers.mjs (in-memory Mongo)
 ```
 
 ## 4. Cross-cutting architecture decisions

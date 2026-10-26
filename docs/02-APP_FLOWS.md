@@ -198,6 +198,28 @@ Flow notation: `storefront` = `frontend/`, `admin` = `admin/`, `API` =
    (`order_updated`) — the emit helpers are null-safe if realtime is down.
 4. PayPal transaction id is displayed on order cards; money is rendered with
    `Intl.NumberFormat` USD + daisyUI tooltips.
+5. Refunds are an **API-only** admin action (`POST /api/orders/refund` — no
+   dashboard button yet). The intent is claimed before the gateway call, so a
+   double click cannot refund twice. `refundStatus` (not `paymentStatus`) is
+   the truth while the provider is undecided:
+
+```
+POST /api/orders/refund
+  already completed              → 200 alreadyRefunded
+  payment not completed          → 400
+  refund pending/indeterminate   → 409 REFUND_PENDING_RECONCILIATION
+  no capture id (PayPal)         → 409
+  claim intent atomically        → refundStatus 'pending'
+     PayPal COMPLETED            → 200 refunded + inventory released
+     PayPal PENDING              → 202 stays 'pending' (money not returned)
+     PayPal 4xx rejection        → 502 refundStatus 'failed' (safe to retry)
+     timeout / 5xx / unknown     → 502 indeterminate, stays 'pending' + alert
+     COD/Card (manual)           → 200 recorded, inventory released
+```
+
+Inventory release is durable: a failed product credit leaves
+`inventoryRestoration.status = 'reconciliation_required'` and is retried by
+the sweep, never silently dropped.
 
 ### 2.5 Analytics views — ✅ Implemented
 
@@ -262,6 +284,16 @@ delivery → signature verify (fail-closed; any failure → 400/500, NO order wr
              success → paymentStatus 'completed', record ids, event completed
              retry budget exhausted → terminal 200 +
                   result 'no_matching_order_retry_exhausted' + ops alert
+        → PAYMENT.CAPTURE.REFUNDED:
+             match order by refundId → else capture id from the
+             resource 'up' link → else terminal alert
+             verify refund amount(cents) + currency vs order
+             COMPLETED → paymentStatus 'refunded', refundStatus
+                  'completed', inventory released once
+             PENDING   → stays pending
+             FAILED/CANCELLED/DENIED → refundStatus 'failed', order
+                  stays paid (retryable)
+             unknown status → terminal 200 + ops alert
 ```
 
 ### 3.4 Graceful shutdown — ✅ Implemented

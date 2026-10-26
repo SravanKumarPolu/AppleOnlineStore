@@ -31,6 +31,8 @@ let user;
 let userToken;
 let adminToken;
 let product;
+let otherUser;
+let otherToken;
 
 const sockets = [];
 
@@ -95,6 +97,16 @@ async function waitForRegistration(expected) {
   throw new Error(`only ${socketService.getConnectedUsersCount()} socket(s) registered`);
 }
 
+/** Wait until the server-side socket has joined every expected room. */
+async function waitUntilRooms(socket, expectedRooms) {
+  for (let i = 0; i < 100; i += 1) {
+    const rooms = socketService.io.sockets.sockets.get(socket.id)?.rooms || new Set();
+    if (expectedRooms.every((room) => rooms.has(room))) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`socket never joined ${expectedRooms.join(', ')}`);
+}
+
 const placeOrder = () =>
   request(app)
     .post('/api/orders')
@@ -110,6 +122,8 @@ beforeAll(async () => {
 
   user = await createTestUserDoc('user');
   userToken = makeUserToken(user._id);
+  otherUser = await createTestUserDoc('user');
+  otherToken = makeUserToken(otherUser._id);
   adminToken = makeAdminToken('admin@test.local');
 
   product = await productModel.create({
@@ -193,4 +207,75 @@ describe('Socket.IO — real server ↔ real client', () => {
     const delivered = await nextEvent;
     expect(String(delivered._id)).toBe(String(res.body.order._id));
   }, 45000);
+
+  it('delivers an admin status change to the shopper (populated user reference)', async () => {
+    const shopper = await connect(userToken);
+    await waitForRegistration(1);
+
+    const placed = await placeOrder();
+    expect(placed.status).toBe(200);
+    const orderId = String(placed.body.order._id);
+
+    const event = waitForEvent(shopper, 'order_updated', (payload) =>
+      String(payload._id) === orderId && payload.orderStatus === 'Packing'
+    );
+
+    const update = await request(app)
+      .put('/api/orders/status')
+      .set('token', adminToken)
+      .send({ orderId, status: 'Packing' });
+    expect(update.status).toBe(200);
+
+    // The emitter runs with a POPULATED userId ({ _id, name, email }); the
+    // room key must be derived from its id, not from String(object).
+    const delivered = await event;
+    expect(delivered.orderStatus).toBe('Packing');
+  }, 30000);
+
+  it('refuses to join an order room owned by another shopper', async () => {
+    const owner = await connect(userToken);
+    const intruder = await connect(otherToken);
+    await waitForRegistration(2);
+
+    const placed = await placeOrder();
+    expect(placed.status).toBe(200);
+    const orderId = String(placed.body.order._id);
+
+    // Owner can join their own room.
+    owner.emit('join_order_room', orderId);
+    await waitUntilRooms(owner, [`order_${orderId}`]);
+
+    // Another authenticated shopper cannot, even with the exact id.
+    intruder.emit('join_order_room', orderId);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const intruderRooms = socketService.io.sockets.sockets.get(intruder.id)?.rooms || new Set();
+    expect(intruderRooms.has(`order_${orderId}`)).toBe(false);
+
+    // And no private order event is delivered to them.
+    let leaked = false;
+    intruder.on('order_updated', () => {
+      leaked = true;
+    });
+
+    await request(app)
+      .put('/api/orders/status')
+      .set('token', adminToken)
+      .send({ orderId, status: 'Packing' });
+
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(leaked).toBe(false);
+  }, 30000);
+
+  it('keeps a user registered while another of their sockets stays connected', async () => {
+    const tabOne = await connect(userToken);
+    const tabTwo = await connect(userToken);
+    await waitForRegistration(1);
+
+    tabOne.disconnect();
+    // Wait for the server-side disconnect handler to run.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    expect(socketService.getConnectedUsersCount()).toBe(1);
+    expect(tabTwo.connected).toBe(true);
+  });
 });

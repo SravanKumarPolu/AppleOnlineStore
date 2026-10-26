@@ -63,6 +63,12 @@ connected-user count.
 - Rooms: `user_<id>`, `admin_room`, `order_<id>`. Server→client events:
   `order_updated` (+ `payment_update`/`shipping_update` variants),
   `new_order`, `user_typing`/`user_stop_typing`.
+- **Order rooms are private.** A shopper socket may join `order_<id>` only after
+  the server verifies the order belongs to that account; admins join by role.
+  Typing relays require a joined room. An ObjectId is not a secret — never
+  relax this to "the id is hard to guess".
+- The personal room key is derived from `userId._id` when a populated user
+  document is passed (`user_[object Object]` was a real silent-drop bug).
 - All emitters are null-safe: if realtime is down/uninitialized, order flows
   still succeed (this fixed a real 500-on-status-update bug).
 - `socketService.close()` is part of the shutdown order — no orphaned
@@ -100,6 +106,61 @@ amount-in-cents vs `order.total`, currency vs `order.currency`, cross-order
 grafts rejected, refunded orders never modified. The capture endpoint
 (`POST /api/orders/paypal/capture`) verifies the same way (409 on mismatch)
 and sweeps `unresolved` events after a trusted update.
+
+### 5.1 Refund reconciliation (`refundStatus`)
+
+A refund is **not** finished because the API request was sent. `refundStatus`
+is the operator-facing truth:
+
+| State | Meaning | Action |
+|---|---|---|
+| `null` | No refund requested | — |
+| `pending` | Requested; PayPal has not confirmed (PENDING result, timeout, 5xx, unknown status) | Check the PayPal dashboard for the refund id. If it completed, the signed `PAYMENT.CAPTURE.REFUNDED` webhook will settle it; otherwise reconcile manually. The API refuses a second automatic refund (`409 REFUND_PENDING_RECONCILIATION`) — **do not** force-repeat it |
+| `completed` | Money returned; `paymentStatus:'refunded'`; inventory released exactly once | None |
+| `failed` | Definitive provider rejection (4xx) — no refund exists | Safe to retry the endpoint |
+
+```bash
+# Refunds stuck pending (Mongo shell)
+db.orders.find({refundStatus:'pending'}, {paymentStatus:1, refundId:1,
+  refundMethod:1, refundReason:1, refundLastError:1, refundAttempts:1})
+```
+
+Alerts to route: `PAYMENT WEBHOOK ALERT [refund_indeterminate]`,
+`[refund_unknown_order]`, `[refund_amount_currency_mismatch]`,
+`[refund_unknown_status]`.
+
+### 5.2 Inventory restoration (owed stock credits)
+
+A release claims `stockReserved:false` and records a **durable** restoration
+obligation. Once claimed, the units are owed to the catalog until every item is
+credited; a failed product write is retried by the sweep (every
+`RESERVATION_SWEEP_INTERVAL_MS`, default 5 min, and once at boot).
+
+| `inventoryRestoration.status` | Meaning | Action |
+|---|---|---|
+| `none` | Nothing released yet | — |
+| `pending` | Claimed, credit not finished (e.g. crash between claim and credit) | None — the next sweep resumes; watch it |
+| `completed` | Every item credited exactly once | None |
+| `reconciliation_required` | At least one item failed to credit (`lastError`, `attempts`) | Investigate the product id in `lastError`; the sweep keeps retrying. If it never clears, credit stock manually **once** and set `items[].stockRestored` for that item |
+
+```bash
+# Owed restorations (Mongo shell)
+db.orders.find({'inventoryRestoration.status': {$in:['pending','reconciliation_required']}},
+  {_id:1, orderStatus:1, paymentStatus:1, 'inventoryRestoration':1,
+   'items.productId':1, 'items.quantity':1, 'items.stockRestored':1})
+```
+
+Alerts to route: `INVENTORY RESTORATION ALERT [unresolved_stock_restoration]`,
+`[sweep_unresolved]`. These mean sellable stock is temporarily missing —
+they are not routine noise.
+
+**Residual (honest):** this is a retryable obligation, not a distributed
+transaction. If the process dies after a product credit but before the
+per-item `stockRestored` marker is written, a later retry can credit that item
+twice. The window is one write wide, the state stays visible
+(`pending`/`reconciliation_required`), and the alert gives an operator the
+exact order/product. Eliminating it would require a product-side idempotency
+ledger (not present).
 
 ## 6. Credential rotation & PayPal validation (owner runbooks)
 

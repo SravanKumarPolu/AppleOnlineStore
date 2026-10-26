@@ -1,11 +1,15 @@
 # NovaCart — Testing Plan & Traceability (As-Built)
 
 > **Status:** Test inventory **re-verified by execution 2026-10-26** (pre-DevOps
-> baseline pass — see [devops/00-PRE-DEVOPS-QUALITY-BASELINE.md](./devops/00-PRE-DEVOPS-QUALITY-BASELINE.md)).
-> Baseline: **backend 36 suites / 359 tests PASS · frontend 23 files / 118
-> tests PASS · admin 13 files / 70 tests PASS · storefront E2E 2 spec files /
-> 13 tests PASS (real browser vs the real backend).** This file is the
-> authoritative command reference — several npm scripts lie (see §3).
+> baseline pass + post-stabilization pass — see
+> [docs/10-FINAL-STABILIZATION-REPORT.md](./10-FINAL-STABILIZATION-REPORT.md);
+> the preserved pre-fix baseline is
+> [devops/00-PRE-DEVOPS-QUALITY-BASELINE.md](./devops/00-PRE-DEVOPS-QUALITY-BASELINE.md)).
+> Current: **backend 41 suites / 404 tests PASS · frontend 24 files / 125
+> tests PASS · admin 13 files / 70 tests PASS · storefront E2E 3 spec files /
+> 17 tests × Chromium/Firefox/WebKit = 51 PASS (real browsers vs the real
+> backend).** This file is the authoritative command reference — several npm
+> scripts lie (see §3).
 >
 > **Chain:** … → [05-API_REFERENCE.md](./05-API_REFERENCE.md) →
 > [06-DEPLOYMENT.md](./06-DEPLOYMENT.md) → **this file** →
@@ -57,7 +61,7 @@ security decision and DB write executes for real.
 ### 1b. Additional backend suites (present since the 2026-10-24/25 passes; verified 2026-10-26)
 
 The table in §1 lists only the suites that existed when this file was first
-written. The suite has since grown to **36 spec files / 359 tests**; the
+written. The suite has since grown to **41 spec files / 404 tests**; the
 remainder are:
 
 | Spec | Focus |
@@ -77,6 +81,11 @@ remainder are:
 | `productImageLifecycle.spec.js` | Image array handling on add/remove paths |
 | `shopperAdminTokenBoundary.spec.js` | Admin tokens rejected on shopper routes (403) and vice versa |
 | `modelIndexIntegrity.spec.js` | **New 2026-10-26** — index-name conflicts, AF-1 unique partial index, `connectDB` awaits index build |
+| `refundWorkflow.spec.js` | **15** — authz; full/partial rules; atomic refund claim (concurrent requests issue exactly one gateway refund); `PENDING` → 202 + not refunded; timeout → reconcilable `pending` + retry blocked; definitive 4xx → `failed` + safe retry; signed `PAYMENT.CAPTURE.REFUNDED` completes/failed/mismatch, duplicate does not double-credit stock |
+| `reservationExpiry.spec.js` | **10** — TTL; expired hold released once; live/COD/paid untouched; late capture after cancellation; **failed product credit stays owed and is retried**; multi-item at-most-once; deleted product settles; capture refused pre-flight and across an in-flight cancel |
+| `socketRealtime.spec.js` | **7** — real server↔client: shopper + admin delivery, anonymous/invalid token refused, reconnect, populated-user update, **foreign order-room join refused**, two-tab disconnect keeps registration |
+| `secretScanner.spec.js` | **7** — fixture paths cannot hide real assignments; credential-shaped patterns never waived; placeholders/credential-less URIs ignored |
+| `sandboxScriptSafety.spec.js` | **2** — `--create` / `--capture` refuse to run with `PAYPAL_ENV=live` (exit 2, no request) |
 
 ## 2. Frontend suite (vitest)
 
@@ -84,7 +93,7 @@ remainder are:
 cd frontend && npm run test -- --run
 ```
 
-10 files / 38 tests (jsdom + @testing-library/react): ShopContext guard,
+24 files / 125 tests (jsdom + @testing-library/react): ShopContext guard,
 Product page, PayPalPayment wrapper, useCart, useWebSocket, BestSeller,
 LatestCollection, ProductItems, PlaceOrder checkout wiring (COD/Card submit
 `/api/orders`, cart clear, redirect, failure/empty-cart/login guards,
@@ -157,13 +166,16 @@ run — no manual setup:
 2. **Storefront**: the vite dev server on `:5173` (default CORS-allowed
    origin).
 
-`e2e/checkout.spec.ts` (3 tests) and `e2e/ui-audit.spec.ts` (10 tests) then drive
-**real Chromium** through the money path: UI registration (form → token in localStorage) → catalog browse
-→ product page → color + add-to-cart (server cart sync observed) → cart page
-→ delivery form → **COD** / **Card** order → `/orders` redirect → the
-persisted order verified through the API with the browser's own token
-(method, `pending` payment status, totals). First run downloads the
-Playwright Chromium binary (~120 MiB).
+`e2e/checkout.spec.ts` (3), `e2e/ui-audit.spec.ts` (10) and
+`e2e/a11y.spec.ts` (4) then drive **real Chromium, Firefox and WebKit**
+(17 tests × 3 projects = 51) through the money path: UI registration (form →
+token in localStorage) → catalog browse → product page → color +
+add-to-cart (server cart sync observed) → cart page → delivery form →
+**COD** / **Card** order → `/orders` redirect → the persisted order verified
+through the API with the browser's own token (method, `pending` payment
+status, totals). The a11y spec runs axe-core on home/collection/product/login
+with animations settled and the whole page revealed. First run downloads the
+Playwright browser binaries.
 
 **Deliberately not driven here:** the PayPal branch — it needs real sandbox
 credentials and a public HTTPS host (owner item, `docs/devops/08`). The
@@ -222,7 +234,7 @@ row is now ✅/🟡.)
 | Storefront cart context | `frontend/src/context`, `useCart` | ✅ frontend vitest |
 | Storefront PayPal button wrapper | `PayPalPayment.tsx` | ✅ frontend vitest (wrapper only — not the money flow) |
 | Storefront WebSocket client | `useWebSocket` | ✅ frontend vitest |
-| Checkout end-to-end (browser → order) | `PlaceOrder.tsx` flows | ✅ component-level `PlaceOrder.test.tsx` + **real-browser E2E** `e2e/checkout.spec.ts` (COD + Card, 2 specs, real backend + real DB); PayPal-branch E2E open (needs sandbox creds — `docs/devops/08`) |
+| Checkout end-to-end (browser → order) | `PlaceOrder.tsx` flows | ✅ component-level `PlaceOrder.test.tsx` + **real-browser E2E** `e2e/checkout.spec.ts` (COD + Card + install prompt, 3 tests × 3 engines, real backend + real DB); PayPal-branch E2E open (needs sandbox creds — `docs/devops/08`) |
 | Admin panel — pages, analytics, chrome | `admin/src` | ✅ `apiTypes` (11) + `Login` (5) + `Navbar` (2) + `dashboard` (4) + `orders` (6) + `add` (4) + `list` (7) + the four analytics pages (sales 6 / product 6 / user 5 / search 5) + `Sidebar` (4) — fetch contracts incl. Bearer auth + default 30-day windows, filter re-fetches, render/error/loading/empty states, deleted-product row filtering, nav↔route parity + active highlighting |
 | Live PayPal (sandbox or live) | — | ❓ UNVERIFIED — mocks only at HTTP edge; run `docs/devops/08` checklist |
 

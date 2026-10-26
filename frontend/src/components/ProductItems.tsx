@@ -80,7 +80,7 @@ const ProductItems: React.FC<ProductItemsProps> = ({ id, image, name, price, bes
 
           {/* Enhanced Badge for new products */}
           <div className="absolute top-4 left-4">
-            <span className="badge badge-primary shadow-md">
+            <span className="badge badge-primary shadow-md bg-indigo-100 text-indigo-800 border border-indigo-200">
               New
             </span>
           </div>
@@ -128,7 +128,7 @@ const ProductItems: React.FC<ProductItemsProps> = ({ id, image, name, price, bes
             </div>
             
             {/* Enhanced Discount badge */}
-            <span className="badge badge-success">
+            <span className="badge badge-success bg-emerald-100 text-emerald-800 border border-emerald-200">
               -20%
             </span>
           </div>

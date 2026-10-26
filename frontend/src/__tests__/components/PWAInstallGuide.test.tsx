@@ -46,7 +46,9 @@ describe('PWA installation guide', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Install App' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    // The icon-only dismiss control was given a unique, descriptive name
+    // ("Close install guide") so it is distinguishable from other dialogs.
+    fireEvent.click(screen.getByRole('button', { name: /close install guide/i }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 

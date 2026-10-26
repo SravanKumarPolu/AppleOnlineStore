@@ -23,10 +23,25 @@ A full-stack e-commerce system: **storefront PWA + admin dashboard + REST/realti
   account lockout, signature-verified PayPal webhooks with a recoverable
   idempotency state machine, health endpoints, graceful bounded shutdown,
   boot-time configuration guardrails, log redaction, shared CORS allowlist,
-  credential-safe MongoDB connection resolver. **35 test suites /
-  355 tests passing.**
+  credential-safe MongoDB connection resolver. **41 test suites /
+  404 tests passing** (plus 24 frontend files / 125 tests, 13 admin files /
+  70 tests, and 51 real-browser E2E checks across Chromium/Firefox/WebKit).
 
 ### Known limitations (documented, not hidden)
+
+- **Refunds are an admin API only** (`POST /api/orders/refund`) — there is no
+  dashboard button or customer-facing flow. Full refunds only; a PayPal
+  refund that is PENDING or whose outcome is unknown stays
+  `refundStatus:'pending'` and requires reconciliation rather than being
+  reported as complete (K-14, fixed 2026-10-26).
+- **PayPal is verified against mocks only.** Sandbox credentials and order
+  creation work, but a signed webhook end-to-end is blocked on
+  `PAYPAL_WEBHOOK_ID` + a public HTTPS host + a sandbox buyer session — see
+  `docs/devops/08`.
+- **Inventory restoration is durable but not distributed-transactional.** A
+  failed product credit is retried by the sweep; the tiny crash window
+  between a successful credit and its bookkeeping marker is documented in
+  `docs/09` §5.2.
 
 - **COD and Card checkout create real orders** (fixed 2026-10-24, K-1):
   COD/Card submit through `POST /api/orders` as `paymentStatus:'pending'`

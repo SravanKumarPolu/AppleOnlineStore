@@ -55,12 +55,17 @@ production 500s generic · health payloads booleans-only.
 | ID | Risk | Status |
 |---|---|---|
 | **S1** | **Live credentials in git history** — full `backend/.env` blob in agent-checkpoint refs (`9d36bce`, `7855434`), a Mongo password in a historical `server.log`, and a suspect-real admin password on pushed `main@00b08de` (leak confined to the **owner's canonical repo** — this working copy verified clean: [docs/devops/09-GO-LIVE-GATES-EXECUTION.md](./devops/09-GO-LIVE-GATES-EXECUTION.md) §1.4) | 🟡 **Partially closed (2026-10-24):** `JWT_SECRET` + `ADMIN_PASSWORD` rotated locally and live-verified (pre-rotation tokens 401, new admin pair 200). Remaining owner actions: PayPal secret/webhook id, MongoDB Atlas password, Cloudinary/SMTP keys (dashboard rotations) + canonical-repo history purge. Runbook: [docs/devops/07](./devops/07-CREDENTIAL-ROTATION-RUNBOOK.md); execution record: [docs/devops/09](./devops/09-GO-LIVE-GATES-EXECUTION.md) |
-| S2 | npm audit advisories (backend 64 / frontend 55 / admin 22, incl. dev trees) | 📋 Remediation plan drafted (`../SECURITY_GATE_PLAN.md`), pending approval |
+| S2 | npm audit advisories | ✅ **Re-baselined 2026-10-26** (non-mutating `npm audit`): backend **0**, admin **0**, frontend **3 moderate** — all in the build-time Tailwind 3 / PostCSS chain (`postcss-selector-parser` CPU-exhaustion), no high/critical. Remediation is the planned Tailwind 4 upgrade window; not a runtime exposure |
 | S3 | Env-based admin login, non-timing-safe plaintext compare | 📋 Plan drafted |
 | S4 | No JWT revocation; 7-day user tokens | 📋 Plan drafted |
-| S5 | Dead `middleware/adminAuth.js` | 📋 Hygiene backlog |
-| S6 | Duplicated auth middleware stacks | 📋 Hygiene backlog |
+| S5 | Dead `middleware/adminAuth.js` | ✅ **Closed** — file deleted 2026-10-25 (K-9 consolidation) |
+| S6 | Duplicated auth middleware stacks | ✅ **Closed** — single `middleware/auth.js` (`authUser`/`authAdmin`); `authMiddleware.js` deleted |
 | S7 | JWT algorithm not pinned in `jwt.verify` | 📋 Hygiene backlog |
+| — | Refund duplication / false finalization (`PENDING` recorded as refunded) | ✅ **Closed 2026-10-26** — atomic intent claim before the gateway call, separate `refundStatus`, 202 for PENDING, signed `PAYMENT.CAPTURE.REFUNDED` reconciliation, amount+currency verification (K-14) |
+| — | Permanent inventory loss when a restoration credit failed | ✅ **Closed 2026-10-26** — durable per-item marker + `inventoryRestoration` retry sweep + alert (K-13) |
+| — | Late capture resurrecting a cancelled order | ✅ **Closed 2026-10-26** — pre-flight refusal + atomic cancelled/refunded guard, capture recorded for refund, alert (K-15) |
+| — | Socket.IO order-room IDOR + populated `userId` room-key bug | ✅ **Closed 2026-10-26** — ownership check on join, typing allow-list, room key from `userId._id` (K-16) |
+| — | Secret scanner fixture exclusions could hide a real credential | ✅ **Closed 2026-10-26** — fixtures are scanned; only clearly synthetic values are waived; locked by `secretScanner.spec.js` |
 | O1–O3 | Cart IDOR / category+address unauthenticated writes | ✅ **Closed** (final gate, 13 regression tests) |
 | — | Webhook interrupted-processing acknowledged as duplicate | ✅ **Closed** (state machine + later unmatched-capture hardening) |
 | — | PayPal env split-brain (capture keyed off `NODE_ENV`, verifier off `PAYPAL_ENV`) | ✅ **Closed** — single `PAYPAL_ENV` switch + boot guardrails |
@@ -111,7 +116,7 @@ plan (do not remove ad hoc — lockfiles and CI assumptions change).
 
 ## 8. Security validation status
 
-- ✅ Automated: 36 backend suites / 359 tests (authz matrices, auth/lockout/
+- ✅ Automated: 41 backend suites / 404 tests (authz matrices, auth/lockout/
   password-reset contracts, webhook fail-closed + state machine, redaction
   canaries, shutdown lifecycle, index/startup contract) — canonical command in
   [07-TESTING_PLAN.md](./07-TESTING_PLAN.md) §1.

@@ -28,7 +28,7 @@ const child = spawn(process.execPath, ['server.js'], {
     NODE_ENV: 'development',
     PORT,
     MONGODB_URI: uri, // bare host -> resolver must apply the default database
-    JWT_SECRET: 'verify-startup-only-not-a-real-credential',
+    JWT_SECRET: 'verify-jwt-secret-for-boot-check-only',
     PAYPAL_ENV: 'sandbox',
     PAYPAL_CLIENT_ID: 'verify-client-id',
     PAYPAL_CLIENT_SECRET: 'verify-client-secret',

@@ -10,7 +10,7 @@ import { redactError } from '../utils/redact.js';
 import { getActiveWebhookVerifier } from '../services/paypalWebhookService.js';
 import { createPayPalEnvironment } from '../config/paypalEnv.js';
 import { UserActivity, ProductPerformance } from '../models/analyticsModel.js';
-import { reservationExpiryFrom, restoreReservedStock } from '../services/reservationService.js';
+import { reservationExpiryFrom, releaseOrderReservation } from '../services/reservationService.js';
 
 dotenv.config();
 
@@ -635,6 +635,27 @@ const capturePayPalPayment = async (req, res) => {
       });
     }
 
+    // A cancelled order has already had its stock returned (admin cancel or the
+    // reservation-expiry sweep), and a refunded one has had its money returned.
+    // Capturing either would take money for goods the store no longer holds —
+    // refuse BEFORE the gateway call, so no refund obligation is created.
+    // The atomic update below closes the race where cancellation lands while
+    // the capture request is in flight.
+    if (existingOrder.orderStatus === 'Cancelled' || existingOrder.paymentStatus === 'refunded') {
+      alertUnresolvedWebhook('capture_blocked_order_not_fulfillable', {
+        paypalOrderId: orderID,
+        orderDbId: existingOrder._id,
+        orderStatus: existingOrder.orderStatus,
+        paymentStatus: existingOrder.paymentStatus,
+      });
+      return res.status(409).json({
+        success: false,
+        message:
+          'This order was cancelled or refunded and can no longer be paid. Place a new order.',
+        error: 'ORDER_NOT_PAYABLE',
+      });
+    }
+
     // Capture the PayPal payment
     const request = new paypal.orders.OrdersCaptureRequest(orderID);
     request.requestBody({});
@@ -686,9 +707,17 @@ const capturePayPalPayment = async (req, res) => {
         });
       }
       
-      // Update order in database
+      // Update order in database. The filter re-checks the state atomically:
+      // a cancellation/refund that landed while the gateway call was in flight
+      // must never be undone by a late capture (that would double-sell units
+      // that were already returned).
       const order = await orderModel.findOneAndUpdate(
-        { paypalOrderId: orderID, userId },
+        {
+          paypalOrderId: orderID,
+          userId,
+          orderStatus: { $ne: 'Cancelled' },
+          paymentStatus: { $ne: 'refunded' },
+        },
         {
           paymentStatus: 'completed',
           paypalCaptureId: captureId,
@@ -697,6 +726,38 @@ const capturePayPalPayment = async (req, res) => {
         },
         { new: true }
       );
+
+      if (!order) {
+        // The money WAS captured but the order may not be fulfilled. Record the
+        // capture reference (so an operator can refund it) and never mark it
+        // paid. Fail closed with an ops alert.
+        await orderModel
+          .updateOne(
+            { _id: existingOrder._id },
+            { $set: { paypalCaptureId: captureId, paypalTransactionId: transactionId } }
+          )
+          .catch((bookkeepingError) => {
+            console.error(
+              'Capture reconciliation bookkeeping failed:',
+              redactError(bookkeepingError)
+            );
+          });
+        alertUnresolvedWebhook('capture_after_cancellation', {
+          paypalOrderId: orderID,
+          orderDbId: existingOrder._id,
+          captureId,
+          capturedAmount: captureAmount,
+          capturedCurrency: captureCurrency,
+          reason: 'order became cancelled or refunded during capture',
+        });
+        return res.status(409).json({
+          success: false,
+          message:
+            'Payment was captured but the order was cancelled or refunded in the meantime; flagged for manual reconciliation',
+          error: 'CAPTURE_REQUIRES_RECONCILIATION',
+          captureDetails: { captureId, amount: captureAmount, currency: captureCurrency },
+        });
+      }
       
       console.log('📦 Order updated in database:', order._id);
 
@@ -823,6 +884,12 @@ const WEBHOOK_RESULTS = {
   CAPTURE_ORDER_MISMATCH: 'capture_order_mismatch',
   IGNORED_EVENT_TYPE: 'ignored_event_type',
   CAPTURE_AFTER_CANCELLATION: 'capture_after_cancellation',
+  REFUND_COMPLETED: 'refund_completed',
+  REFUND_PENDING: 'refund_pending',
+  REFUND_FAILED: 'refund_failed',
+  REFUND_AMOUNT_MISMATCH: 'refund_amount_currency_mismatch',
+  REFUND_UNKNOWN_ORDER: 'refund_unknown_order',
+  REFUND_UNKNOWN_STATUS: 'refund_unknown_status',
 };
 
 function getWebhookProcessingLockMs() {
@@ -1073,6 +1140,119 @@ async function processCaptureCompletedEvent(event, record) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Refund reconciliation (PAYMENT.CAPTURE.REFUNDED)
+//
+// A refund is only real when PayPal says COMPLETED. Before this handler the
+// event was acknowledged as an ignored type, so a refund left in the
+// conservative 'pending' state (PENDING result, or an indeterminate timeout)
+// could never reach a truthful final state without an operator.
+//
+// Matching is deliberately strict:
+//   1. the recorded refund id, or
+//   2. the capture id carried by the refund resource's `up` link
+//      (.../payments/captures/<captureId>/refund), which also covers a refund
+//      whose id was lost to a crash after the gateway call.
+// Amount AND currency must equal the order total before any write; a partial
+// or foreign-currency refund is flagged, never applied as a full refund.
+// ---------------------------------------------------------------------------
+const REFUND_EVENT_TYPE = 'PAYMENT.CAPTURE.REFUNDED';
+
+function captureIdFromRefundResource(resource) {
+  const links = Array.isArray(resource?.links) ? resource.links : [];
+  for (const link of links) {
+    const match = /\/payments\/captures\/([^/?#]+)/.exec(String(link?.href || ''));
+    if (match) return match[1];
+  }
+  return resource?.supplementary_data?.related_ids?.capture_id || null;
+}
+
+async function processRefundEvent(event) {
+  const resource = event.resource || {};
+  const refundId = resource.id;
+  const status = String(resource.status || '').toUpperCase();
+  const captureId = captureIdFromRefundResource(resource);
+  const amount = resource.amount;
+  const cents = parseAmountToCents(amount?.value);
+
+  let order = null;
+  if (refundId) order = await orderModel.findOne({ refundId });
+  if (!order && captureId) order = await orderModel.findOne({ paypalCaptureId: captureId });
+
+  if (!order) {
+    return {
+      unresolved: true,
+      httpStatus: 200, // deterministic — a retry cannot invent the order
+      success: true,
+      message: 'Refund event has no matching order; flagged for review',
+      result: WEBHOOK_RESULTS.REFUND_UNKNOWN_ORDER,
+      note: `no order matched refund ${refundId || '(no id)'} capture ${captureId || '(none)'}`,
+      alert: {
+        reason: 'refund_unknown_order',
+        details: { eventId: event.id, refundId: refundId || null, captureId: captureId || null },
+      },
+    };
+  }
+
+  if (
+    !Number.isFinite(cents) ||
+    cents !== Math.round(order.total * 100) ||
+    String(amount?.currency_code || '').toUpperCase() !== order.currency.toUpperCase()
+  ) {
+    return {
+      unresolved: true,
+      httpStatus: 200, // deterministic — never apply a partial/foreign refund
+      success: true,
+      message: 'Refund amount or currency does not match the order; flagged for review',
+      result: WEBHOOK_RESULTS.REFUND_AMOUNT_MISMATCH,
+      note: `refund ${amount?.value} ${amount?.currency_code} vs order ${order.total} ${order.currency}`,
+      alert: {
+        reason: 'refund_amount_currency_mismatch',
+        details: {
+          eventId: event.id,
+          refundId: refundId || null,
+          captureId: captureId || null,
+          refundAmount: amount?.value,
+          refundCurrency: amount?.currency_code,
+          orderTotal: order.total,
+          orderCurrency: order.currency,
+          orderDbId: order._id,
+        },
+      },
+    };
+  }
+
+  if (status === 'COMPLETED') {
+    // Idempotent: settleRefundCompleted only matches a still-uncompleted refund.
+    const updated = await settleRefundCompleted(order._id, { refundId: refundId || null, method: 'paypal' });
+    if (updated) await notifyOrderChange(order._id);
+    return { unresolved: false, result: WEBHOOK_RESULTS.REFUND_COMPLETED };
+  }
+
+  if (status === 'PENDING') {
+    await settleRefundPending(order._id, { refundId: refundId || null, method: 'paypal' });
+    return { unresolved: false, result: WEBHOOK_RESULTS.REFUND_PENDING };
+  }
+
+  if (['FAILED', 'CANCELLED', 'DENIED'].includes(status)) {
+    await settleRefundFailed(order._id, new Error(`PayPal refund status ${status}`));
+    return { unresolved: false, result: WEBHOOK_RESULTS.REFUND_FAILED };
+  }
+
+  return {
+    unresolved: true,
+    httpStatus: 200, // deterministic — an unknown status is for a human to read
+    success: true,
+    message: 'Unrecognized refund status; flagged for review',
+    result: WEBHOOK_RESULTS.REFUND_UNKNOWN_STATUS,
+    note: `refund ${refundId || '(no id)'} has status ${status || '(none)'}`,
+    alert: {
+      reason: 'refund_unknown_status',
+      details: { eventId: event.id, refundId: refundId || null, status: status || null },
+    },
+  };
+}
+
 const handlePayPalWebhook = async (req, res) => {
   let acquiredRecord = null;
   try {
@@ -1107,7 +1287,10 @@ const handlePayPalWebhook = async (req, res) => {
     //    Amount + currency are required for capture events — they are what the
     //    expected-payment verification in processCaptureCompletedEvent checks.
     const captureId = event.resource?.id;
-    if (event.event_type === 'PAYMENT.CAPTURE.COMPLETED') {
+    if (
+      event.event_type === 'PAYMENT.CAPTURE.COMPLETED' ||
+      event.event_type === REFUND_EVENT_TYPE
+    ) {
       if (!captureId) {
         return res.status(400).json({ success: false, message: 'Malformed capture resource' });
       }
@@ -1199,6 +1382,22 @@ const handlePayPalWebhook = async (req, res) => {
       }
 
       processingResult = outcome.result;
+    } else if (event.event_type === REFUND_EVENT_TYPE) {
+      // Refund reconciliation: a PENDING/indeterminate refund becomes truthful
+      // (completed or failed) only through this signed provider event.
+      const outcome = await processRefundEvent(event);
+
+      if (outcome.unresolved) {
+        await markWebhookEventUnresolved(acquiredRecord._id, outcome);
+        if (outcome.alert) {
+          alertUnresolvedWebhook(outcome.alert.reason, outcome.alert.details);
+        }
+        return res
+          .status(outcome.httpStatus)
+          .json({ success: outcome.success, message: outcome.message });
+      }
+
+      processingResult = outcome.result;
     } else {
       processingResult = WEBHOOK_RESULTS.IGNORED_EVENT_TYPE;
     }
@@ -1235,14 +1434,95 @@ const handlePayPalWebhook = async (req, res) => {
 //
 // Two very different realities behind one admin action:
 //   - PayPal orders carry a capture id: the money is returned through the
-//     PayPal Refunds API, and only a COMPLETED/PENDING refund marks the order.
+//     PayPal Refunds API and the order is only marked refunded once PayPal
+//     reports COMPLETED. A PENDING result stays `refundStatus:'pending'`
+//     (money not yet returned) and is reconciled by the refund webhook or by
+//     an operator; it is never reported as a finished refund.
 //   - COD / Card orders were never charged by us: the store returns the money
 //     out-of-band, so the endpoint records the refund (method "manual").
 //
-// In both cases inventory is restored exactly once (same `stockReserved`
-// claim the admin-cancel path uses) and the change is broadcast to the shopper
-// and the admin room. Repeating the call is idempotent.
+// Duplication safety: the refund INTENT is claimed atomically BEFORE the
+// gateway call, so two concurrent admin clicks (or a retry after a timeout)
+// can never issue two refunds. An indeterminate gateway outcome keeps the
+// claim in 'pending' — the endpoint refuses to retry blindly and asks for
+// reconciliation instead.
+//
+// Inventory is restored exactly once per item by the durable release in
+// services/reservationService.js (the same claim the cancel/expiry paths use)
+// and only when the refund is actually completed.
 // ---------------------------------------------------------------------------
+
+/** Mark a refund completed and return the reserved units. Idempotent. */
+async function settleRefundCompleted(orderId, { refundId = null, method = 'paypal' } = {}) {
+  const updated = await orderModel.findOneAndUpdate(
+    { _id: orderId, paymentStatus: 'completed', refundStatus: { $in: ['pending', null] } },
+    {
+      $set: {
+        paymentStatus: 'refunded',
+        refundStatus: 'completed',
+        refundedAt: new Date(),
+        refundId,
+        refundMethod: method,
+        refundLastError: null,
+      },
+    },
+    { new: true }
+  );
+
+  // Stock goes back only now — the money has actually been returned. The
+  // release is durable: a failed product credit is retried by the sweep.
+  if (updated) {
+    const release = await releaseOrderReservation(orderId);
+    if (release.claimed && release.status !== 'completed') {
+      console.error(
+        `🚨 Refund ${orderId} completed but inventory restoration is unresolved (${release.status})`
+      );
+    }
+  }
+
+  return updated;
+}
+
+/** Record a refund that PayPal accepted but has not completed yet. */
+async function settleRefundPending(orderId, { refundId = null, method = 'paypal' } = {}) {
+  return orderModel.findOneAndUpdate(
+    { _id: orderId, paymentStatus: 'completed', refundStatus: { $in: ['pending', null] } },
+    { $set: { refundId, refundMethod: method, refundLastError: null } },
+    { new: true }
+  );
+}
+
+/** Record a definitive gateway rejection (no refund was created). */
+async function settleRefundFailed(orderId, error) {
+  return orderModel.findOneAndUpdate(
+    { _id: orderId, refundStatus: { $in: ['pending', null] } },
+    {
+      $set: {
+        refundStatus: 'failed',
+        refundMethod: null,
+        refundedAt: null,
+        refundLastError: redactError(error).slice(0, 500),
+      },
+    },
+    { new: true }
+  );
+}
+
+/** True when PayPal answered with a 4xx (a real rejection, not a lost request). */
+function isDefinitiveGatewayRejection(error) {
+  const status = Number(error?.statusCode ?? error?.response?.status);
+  return Number.isInteger(status) && status >= 400 && status < 500;
+}
+
+async function notifyOrderChange(orderId) {
+  try {
+    const withUser = await orderModel.findById(orderId).populate('userId', 'name email');
+    if (withUser) socketService.sendPaymentStatusUpdate(withUser.toJSON());
+  } catch (notifyError) {
+    console.error('Refund notification failed:', redactError(notifyError));
+  }
+}
+
 const refundOrder = async (req, res) => {
   try {
     const { orderId, reason } = req.body || {};
@@ -1260,7 +1540,7 @@ const refundOrder = async (req, res) => {
     }
 
     // Idempotent: a repeated admin action must not refund twice.
-    if (order.paymentStatus === 'refunded') {
+    if (order.paymentStatus === 'refunded' || order.refundStatus === 'completed') {
       return res.json({
         success: true,
         message: 'Order was already refunded',
@@ -1276,28 +1556,70 @@ const refundOrder = async (req, res) => {
       });
     }
 
+    // A refund that PayPal has not confirmed (PENDING, or a request whose
+    // outcome we never received) blocks a second automatic refund: the safe
+    // action is reconciliation in the PayPal dashboard, never a blind retry.
+    if (order.refundStatus === 'pending') {
+      return res.status(409).json({
+        success: false,
+        message:
+          'A refund for this order is already in progress or its outcome is unknown. Reconcile it in the PayPal dashboard before retrying.',
+        error: 'REFUND_PENDING_RECONCILIATION',
+        reconcilable: true,
+        order: order.toJSON(),
+      });
+    }
+
     if (reason !== undefined && typeof reason !== 'string') {
       return res.status(400).json({ success: false, message: 'Refund reason must be a string' });
     }
     const refundReason = typeof reason === 'string' ? reason.trim().slice(0, 200) : null;
 
-    // 1) Gateway refund (PayPal only — the only integrated gateway).
-    let refundId = null;
-    let refundMethod = 'manual';
+    // A completed PayPal order without a capture id cannot be refunded
+    // automatically; fail closed before claiming anything.
+    if (order.paymentMethod === 'PayPal' && !order.paypalCaptureId) {
+      return res.status(409).json({
+        success: false,
+        message: 'Order has no PayPal capture id; refund it in the PayPal dashboard',
+      });
+    }
 
-    if (order.paymentMethod === 'PayPal') {
-      if (!order.paypalCaptureId) {
-        // A completed PayPal order without a capture id cannot be refunded
-        // automatically; fail closed instead of pretending it worked.
-        return res.status(409).json({
-          success: false,
-          message: 'Order has no PayPal capture id; refund it in the PayPal dashboard',
-        });
-      }
+    const method = order.paymentMethod === 'PayPal' ? 'paypal' : 'manual';
 
-      const request = new paypal.payments.CapturesRefundRequest(order.paypalCaptureId);
+    // 1) Claim the refund intent ATOMICALLY, before any gateway call. This is
+    //    what makes concurrent/duplicate requests safe: exactly one caller can
+    //    move the order into 'pending'.
+    const claim = await orderModel.findOneAndUpdate(
+      {
+        _id: order._id,
+        paymentStatus: 'completed',
+        refundStatus: { $in: [null, 'failed'] },
+      },
+      {
+        $set: {
+          refundStatus: 'pending',
+          refundMethod: method,
+          refundReason,
+          refundedAt: null,
+          refundLastError: null,
+        },
+        $inc: { refundAttempts: 1 },
+      },
+      { new: true }
+    );
+
+    if (!claim) {
+      return res.status(409).json({
+        success: false,
+        message: 'Order changed while the refund was being processed; refresh and retry',
+      });
+    }
+
+    // 2) Gateway refund (PayPal only — the only integrated gateway).
+    if (claim.paymentMethod === 'PayPal') {
+      const request = new paypal.payments.CapturesRefundRequest(claim.paypalCaptureId);
       request.requestBody({
-        amount: { value: order.total.toFixed(2), currency_code: order.currency },
+        amount: { value: claim.total.toFixed(2), currency_code: claim.currency },
         ...(refundReason ? { note_to_payer: refundReason } : {}),
       });
 
@@ -1306,76 +1628,137 @@ const refundOrder = async (req, res) => {
         refund = await getPayPalClient().execute(request);
       } catch (gatewayError) {
         console.error('❌ PayPal refund failed:', redactError(gatewayError));
+
+        if (isDefinitiveGatewayRejection(gatewayError)) {
+          // PayPal answered and refused: no refund exists. Safe to retry.
+          await settleRefundFailed(claim._id, gatewayError);
+          return res.status(502).json({
+            success: false,
+            message: 'PayPal rejected the refund; no refund was created and the order is unchanged',
+            error: 'PAYPAL_REFUND_REJECTED',
+          });
+        }
+
+        // Timeout / network failure / 5xx: the refund may or may not exist.
+        // Keep the conservative 'pending' state and require reconciliation.
+        await orderModel.updateOne(
+          { _id: claim._id },
+          { $set: { refundLastError: redactError(gatewayError).slice(0, 500) } }
+        );
+        alertUnresolvedWebhook('refund_indeterminate', {
+          orderDbId: claim._id,
+          captureId: claim.paypalCaptureId,
+          reason: 'gateway request did not return a definitive answer',
+        });
         return res.status(502).json({
           success: false,
-          message: 'PayPal refund failed; the order was left unchanged',
-          error: 'PAYPAL_REFUND_ERROR',
+          message:
+            'PayPal did not confirm the refund; it may still complete. Reconcile the order in the PayPal dashboard before retrying.',
+          error: 'PAYPAL_REFUND_INDETERMINATE',
+          reconcilable: true,
         });
       }
 
-      const status = refund?.result?.status;
-      if (!refund?.result?.id || !['COMPLETED', 'PENDING'].includes(status)) {
-        console.error('❌ Unexpected PayPal refund response status:', status);
+      const status = String(refund?.result?.status || '').toUpperCase();
+      const refundId = refund?.result?.id || null;
+
+      if (!refundId) {
+        // No refund id means later webhook events cannot be matched to this
+        // order. Treat as indeterminate rather than assuming anything.
+        await orderModel.updateOne(
+          { _id: claim._id },
+          { $set: { refundLastError: 'PayPal response contained no refund id' } }
+        );
+        alertUnresolvedWebhook('refund_indeterminate', {
+          orderDbId: claim._id,
+          captureId: claim.paypalCaptureId,
+          reason: 'no refund id in gateway response',
+        });
         return res.status(502).json({
           success: false,
-          message: 'PayPal did not confirm the refund; the order was left unchanged',
-          error: 'PAYPAL_REFUND_UNCONFIRMED',
+          message: 'PayPal did not confirm the refund; reconcile before retrying',
+          error: 'PAYPAL_REFUND_INDETERMINATE',
+          reconcilable: true,
         });
       }
 
-      refundId = refund.result.id;
-      refundMethod = 'paypal';
-    }
+      if (status === 'COMPLETED') {
+        const updated = await settleRefundCompleted(claim._id, { refundId, method: 'paypal' });
+        await notifyOrderChange(claim._id);
+        return res.json({
+          success: true,
+          message: 'Refund issued through PayPal',
+          order: (updated || claim).toJSON(),
+          refund: {
+            id: refundId,
+            method: 'paypal',
+            status: 'completed',
+            amount: claim.total,
+            currency: claim.currency,
+          },
+        });
+      }
 
-    // 2) Mark the order refunded. The filter re-checks the status so a
-    //    concurrent refund/cancel cannot double-apply.
-    const updated = await orderModel.findOneAndUpdate(
-      { _id: order._id, paymentStatus: 'completed' },
-      {
-        $set: {
-          paymentStatus: 'refunded',
-          refundedAt: new Date(),
-          refundId,
-          refundMethod,
-          refundReason,
-        },
-      },
-      { new: true }
-    );
+      if (status === 'PENDING') {
+        const updated = await settleRefundPending(claim._id, { refundId, method: 'paypal' });
+        await notifyOrderChange(claim._id);
+        return res.status(202).json({
+          success: true,
+          message:
+            'PayPal accepted the refund but has not completed it yet; the order is not marked refunded',
+          order: (updated || claim).toJSON(),
+          refund: {
+            id: refundId,
+            method: 'paypal',
+            status: 'pending',
+            amount: claim.total,
+            currency: claim.currency,
+          },
+        });
+      }
 
-    if (!updated) {
-      return res.status(409).json({
+      if (['FAILED', 'CANCELLED', 'DENIED'].includes(status)) {
+        await settleRefundFailed(claim._id, new Error(`PayPal refund status ${status}`));
+        return res.status(502).json({
+          success: false,
+          message: `PayPal did not complete the refund (status ${status}); the order was left unchanged`,
+          error: 'PAYPAL_REFUND_FAILED',
+        });
+      }
+
+      // Unknown status: keep the reconcilable pending state, never guess.
+      await orderModel.updateOne(
+        { _id: claim._id },
+        { $set: { refundId, refundLastError: `unexpected PayPal refund status: ${status || 'none'}` } }
+      );
+      alertUnresolvedWebhook('refund_indeterminate', {
+        orderDbId: claim._id,
+        captureId: claim.paypalCaptureId,
+        reason: `unexpected PayPal refund status: ${status || 'none'}`,
+      });
+      return res.status(502).json({
         success: false,
-        message: 'Order changed while the refund was being processed; refresh and retry',
+        message: 'PayPal returned an unexpected refund status; reconcile before retrying',
+        error: 'PAYPAL_REFUND_INDETERMINATE',
+        reconcilable: true,
       });
     }
 
-    // 3) Return the reserved units exactly once (cancellation and refund share
-    //    the same claim, so the two can never double-restore).
-    const claimed = await orderModel.findOneAndUpdate(
-      { _id: order._id, stockReserved: true },
-      { $set: { stockReserved: false } },
-      { new: true }
-    );
-    if (claimed) {
-      await restoreReservedStock(claimed.items);
-    }
+    // 3) Manual (COD / Card) refund: no gateway, record it and return stock.
+    const updated = await settleRefundCompleted(claim._id, { refundId: null, method: 'manual' });
+    await notifyOrderChange(claim._id);
 
-    // 4) Tell both sides (shopper's personal room + admin room).
-    try {
-      const withUser = await orderModel.findById(order._id).populate('userId', 'name email');
-      if (withUser) {
-        socketService.sendPaymentStatusUpdate(withUser.toJSON());
-      }
-    } catch (notifyError) {
-      console.error('Refund notification failed:', redactError(notifyError));
-    }
-
-    res.json({
+    return res.json({
       success: true,
-      message: refundMethod === 'paypal' ? 'Refund issued through PayPal' : 'Refund recorded (manual)',
-      order: updated.toJSON(),
-      refund: { id: refundId, method: refundMethod, amount: updated.total, currency: updated.currency },
+      message: 'Refund recorded (manual)',
+      order: (updated || claim).toJSON(),
+      refund: {
+        id: null,
+        method: 'manual',
+        status: 'completed',
+        amount: claim.total,
+        currency: claim.currency,
+      },
     });
   } catch (error) {
     console.error('Refund error:', redactError(error));
@@ -1404,27 +1787,14 @@ const updateStatus = async (req, res) => {
     }
 
     // I-3: cancelling a reserved order restores the reserved stock — exactly
-    // once. `stockReserved` is cleared in the same atomic update, so a second
-    // cancel (or a pre-fix order that never reserved) can never inflate stock.
+    // once and durably. The shared release claim also records a retryable
+    // restoration obligation, so a failed product credit is retried by the
+    // sweep instead of being lost.
     if (status === 'Cancelled') {
-      const claimed = await orderModel.findOneAndUpdate(
-        { _id: orderId, stockReserved: true },
-        { $set: { stockReserved: false } },
-        { new: true }
-      );
-      if (claimed) {
-        for (const item of claimed.items) {
-          if (isValidObjectId(item.productId)) {
-            try {
-              await productModel.updateOne(
-                { _id: item.productId },
-                [{ $set: { stockQuantity: { $add: ['$stockQuantity', item.quantity] }, inStock: true } }]
-              );
-            } catch (restoreError) {
-              console.error('Stock restore failure:', redactError(restoreError));
-            }
-          }
-        }
+      try {
+        await releaseOrderReservation(orderId, { cancelOrder: true });
+      } catch (releaseError) {
+        console.error('Stock release during cancellation failed:', redactError(releaseError));
       }
     }
 

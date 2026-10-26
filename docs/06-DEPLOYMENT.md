@@ -44,7 +44,7 @@ Terraform, or process-manager config. What exists:
 cd backend
 cp .env.example .env          # then fill REAL values (see §3)
 npm install
-npm run test:security         # regression gate (36 suites / 359 tests)
+npm run test:security         # regression gate (41 suites / 404 tests)
 node server.js                # listens on 0.0.0.0:$PORT
 
 # Storefront
@@ -95,7 +95,7 @@ npm run build
    retry exhaustion, signature fail-closed, mismatch gates, race sweep,
    idempotency).
 
-## 3. Environment variables — the real 27 (runtime-read, verified)
+## 3. Environment variables — the real 34 (runtime-read, verified 2026-10-26)
 
 `backend/.env`:
 
@@ -104,20 +104,27 @@ npm run build
 | `NODE_ENV` | `production` / anything else | prod + missing `JWT_SECRET` → exit 1 |
 | `PORT` | listen port | default in code |
 | `MONGODB_URI` | connection string | never logged (host-only summary) |
+| `MONGODB_DB` | database name when the URI has no path (default `e-commerce`) | optional |
 | `JWT_SECRET` | JWT signing secret | required in prod (fatal otherwise); 128-char recommendation |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | operator login | warn if missing (admin login 500s); **rotation required — see §5** |
 | `PAYPAL_ENV` | `live` \| `sandbox` | the single switch |
 | `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` | PayPal app creds | fatal if placeholder while `live` |
 | `PAYPAL_WEBHOOK_ID` | webhook to verify against | webhook fails closed without it |
+| `PAYPAL_PAYEE_EMAIL` | optional payee pin | unset = the credential owner; example/test domain + `live` → fatal |
+| `PAYPAL_RESERVATION_TTL_MS` | unpaid PayPal hold TTL (default 1800000) | |
+| `RESERVATION_SWEEP_INTERVAL_MS` | expiry/reconciliation sweep interval (default 300000) | |
 | `WEBHOOK_PROCESSING_LOCK_MS` | in-flight lock window (default 30000) | |
 | `WEBHOOK_MAX_UNMATCHED_ATTEMPTS` | bounded retry budget (default 10) | |
 | `SHUTDOWN_TIMEOUT_MS` | graceful-shutdown budget (default 10000) | |
 | `FRONTEND_URL` / `ADMIN_URL` | CORS allowlist entries | |
+| `CORS_EXTRA_ORIGINS` | comma-separated extra origins | optional |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_SECURE` | email transport | |
 | `SMTP_ALLOW_SELF_SIGNED` | accept self-signed TLS certs (dev only) | default reject — production should never enable |
 | `EMAIL_FROM` / `EMAIL_FROM_NAME` | sender identity | |
 | `APP_NAME` | email branding | default `E-commerce Store` (docs use NovaCart) |
 | `CLOUDINARY_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_SECRET_KEY` | image hosting | exact names as read by `config/cloudinary.js` | |
+| `ENABLE_DEBUG_ENDPOINTS` | expose debug endpoints in production | default `false` (404) |
+| `RATE_LIMIT_MAX` | per-IP requests / 15 min (default 1000) | optional; raise only on a disposable load target |
 
 `frontend/.env`: `VITE_BACKEND_URL`, `VITE_PAYPAL_CLIENT_ID` — the only two
 the code reads (the second was missing from the old template; empty value
@@ -162,7 +169,7 @@ never printed, only variable names.
 | npm audit advisories (backend 64 / frontend 55 / admin 22 incl. dev trees) | 📋 Remediation plan drafted, pending approval (S2) |
 
 Phase 1 conclusion (preserved): **CONDITIONAL GO** — all code-level gates
-passed (13 suites / 111 tests at that time; since grown to 36 suites / 359 tests — see `docs/devops/00-PRE-DEVOPS-QUALITY-BASELINE.md`); deployment is gated on the owner actions
+passed (13 suites / 111 tests at that time; since grown to 41 suites / 404 tests — see `docs/devops/00-PRE-DEVOPS-QUALITY-BASELINE.md`); deployment is gated on the owner actions
 above (`docs/devops/05-PHASE1-COMPLETION-REPORT.md` §7).
 
 ## 6. PLANNED — DevOps roadmap (does NOT exist yet)

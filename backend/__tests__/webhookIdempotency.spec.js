@@ -255,10 +255,12 @@ describe('POST /api/orders/paypal/webhook — recoverable idempotency', () => {
   it('acknowledges non-capture event types without touching orders', async () => {
     await resetOrderToPending();
     activateVerifier();
+    // PAYMENT.CAPTURE.REFUNDED is no longer an ignored type (refunds are
+    // reconciled through it) — use an event this app genuinely does not act on.
     const res = await request(app)
       .post('/api/orders/paypal/webhook')
       .set(WEBHOOK_HEADERS)
-      .send(webhookEvent('WH-EVT-OTHER-TYPE', 'PAYMENT.CAPTURE.REFUNDED', 'CAP-TEST-123'));
+      .send(webhookEvent('WH-EVT-OTHER-TYPE', 'CHECKOUT.ORDER.APPROVED', 'CAP-TEST-123'));
 
     expect(res.status).toBe(200);
     expect((await orderModel.findById(orderId)).paymentStatus).toBe('pending');

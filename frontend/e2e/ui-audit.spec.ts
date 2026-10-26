@@ -20,9 +20,28 @@ function attachMonitors(page: Page) {
     failedRequests.push(`${req.method()} ${req.url()} :: ${req.failure()?.errorText}`);
   });
   page.on('response', (res) => {
-    if (res.status() >= 500) failedRequests.push(`${res.request().method()} ${res.url()} :: ${res.status()}`);
+    // 404s are recorded WITH their URL: WebKit's console message for a failed
+    // subresource omits the URL, so console text alone cannot tell a seeded
+    // placeholder image from a genuinely broken route.
+    if (res.status() === 404 || res.status() >= 500) {
+      failedRequests.push(`${res.request().method()} ${res.url()} :: ${res.status()}`);
+    }
   });
   return { consoleErrors, failedRequests };
+}
+
+/** Wait for finite entrance animations so layout/colour are measured settled. */
+async function settleAnimations(page: Page) {
+  await page.evaluate(async () => {
+    const finite = (document.getAnimations?.() ?? []).filter((animation) => {
+      const endTime = animation.effect?.getComputedTiming?.().endTime;
+      return typeof endTime === 'number' && Number.isFinite(endTime);
+    });
+    await Promise.race([
+      Promise.all(finite.map((animation) => animation.finished.catch(() => {}))),
+      new Promise((resolve) => setTimeout(resolve, 2000)),
+    ]);
+  });
 }
 
 test('core navigation — every routed page renders without console errors or failed requests', async ({ page }) => {
@@ -41,7 +60,16 @@ test('core navigation — every routed page renders without console errors or fa
   // carry Cloudinary URLs).
   const isKnownNoise = (e: string) =>
     /websocket|favicon|example\.com\/e2e-/i.test(e);
-  const realErrors = consoleErrors.filter((e) => !isKnownNoise(e));
+  const missing = failedRequests.filter((e) => /:: 404$/.test(e));
+  const allMissingKnown = missing.every(isKnownNoise);
+  const realErrors = consoleErrors.filter((e) => {
+    if (isKnownNoise(e)) return false;
+    // WebKit reports a bare "Failed to load resource … 404" with no URL. If
+    // every 404 response recorded for this run is known test-data noise, the
+    // bare message is attributable to those URLs.
+    if (allMissingKnown && /Failed to load resource.*404/i.test(e)) return false;
+    return true;
+  });
   expect(realErrors, `console errors: ${JSON.stringify(realErrors, null, 2)}`).toEqual([]);
   const realFailed = failedRequests.filter((e) => !isKnownNoise(e));
   expect(realFailed, `failed requests: ${JSON.stringify(realFailed, null, 2)}`).toEqual([]);
@@ -102,6 +130,10 @@ test('collection page search and category filter work', async ({ page }) => {
 test('mobile viewport (iPhone 12) — layout adapts, bottom nav present, no horizontal scroll', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/', { waitUntil: 'networkidle' });
+
+  // Measure the settled layout: an entrance transform that is still sliding in
+  // is not a layout defect (and WebKit counts transformed overflow area).
+  await settleAnimations(page);
 
   // No horizontal overflow on mobile.
   const overflow = await page.evaluate(

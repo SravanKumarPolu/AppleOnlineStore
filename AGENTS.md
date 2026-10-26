@@ -20,6 +20,7 @@
 | [docs/07-TESTING_PLAN.md](docs/07-TESTING_PLAN.md) | Test inventory, **command truth table**, traceability matrix, gaps |
 | [docs/08-SECURITY.md](docs/08-SECURITY.md) | Auth model, fixed vulns, risk register S1–S7, secrets rules |
 | [docs/09-OPERATIONS.md](docs/09-OPERATIONS.md) | Health/shutdown, webhook ops runbook, incident playbook |
+| [docs/10-FINAL-STABILIZATION-REPORT.md](docs/10-FINAL-STABILIZATION-REPORT.md) | 2026-10-26 acceptance report: defects fixed, executed gates, PayPal/rotation blockers, CONDITIONAL PASS |
 
 **Preserved Phase 1 engineering records (`docs/devops/01…09`, read-only
 history, accurate for their scope):** architecture, security baseline,
@@ -27,11 +28,15 @@ reliability, testing, completion report, webhook-fix rationale, credential
 rotation runbook, PayPal sandbox validation checklist, and the go-live
 gates execution report (2026-10-24 — rotation/validation status).
 
-**Current pre-DevOps gate:**
+**Current pre-DevOps gate:** the preserved Phase 1 baseline is
 [docs/devops/00-PRE-DEVOPS-QUALITY-BASELINE.md](docs/devops/00-PRE-DEVOPS-QUALITY-BASELINE.md)
-— executed 2026-10-26: 36 backend suites / 359 tests, 23 storefront files /
-118 tests, 13 admin files / 70 tests, 13 real-browser E2E tests, plus the load
-baseline artifact. Read it before planning DevOps Phase 01.
+(36 suites / 359 tests, executed 2026-10-26 **before** the stabilization pass).
+The post-fix execution — 41 backend suites / 404 tests, 24 storefront files /
+125 tests, 13 admin files / 70 tests, 17 browser E2E tests × Chromium/Firefox/
+WebKit (51/51), plus the corrected load artifact — is recorded in
+[docs/10-FINAL-STABILIZATION-REPORT.md](docs/10-FINAL-STABILIZATION-REPORT.md).
+Read both before planning DevOps Phase 01; where they differ, `docs/10` wins
+because it was executed after the fixes.
 
 **Everything else at the repo root is HISTORY, not truth** (see §6).
 
@@ -50,15 +55,15 @@ NovaCart/
 ## 3. Command truth table (verified — copy these, not package.json)
 
 ```bash
-# Backend regression suite — THE canonical gate (36 suites / 359 tests)
+# Backend regression suite — THE canonical gate (41 suites / 404 tests)
 cd backend && npm run test:security
 # equivalent: node --experimental-vm-modules node_modules/.bin/jest --runInBand
 
 cd backend && npm run lint            # clean
 cd backend && npm run build           # real syntax check (node --check over 90 files)
-cd frontend && npm run lint && npm run type-check && npm run test -- --run   # 23 files / 118 tests (vitest 5)
+cd frontend && npm run lint && npm run type-check && npm run test -- --run   # 24 files / 125 tests (vitest 5)
 cd frontend && npm run build          # PWA build
-cd frontend && npm run test:e2e       # real-browser E2E (Playwright, 2 spec files / 13 tests: COD + Card + UI audit)
+cd frontend && npm run test:e2e       # real-browser E2E (Playwright, 3 spec files / 17 tests × 3 engines = 51: COD + Card + UI audit + a11y)
 cd admin && npm run test -- --run     # 13 files / 70 tests (vitest 5)
 cd admin && npm run lint && npm run type-check && npm run build
 
@@ -86,23 +91,25 @@ cd admin    && npm run dev            # admin panel (port 5174)
 
 ## 4. Environment variables (the only real ones)
 
-**Backend (30):** `NODE_ENV, PORT, MONGODB_URI, MONGODB_DB (optional),
+**Backend (34):** `NODE_ENV, PORT, MONGODB_URI, MONGODB_DB (optional),
 JWT_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD, PAYPAL_ENV, PAYPAL_CLIENT_ID,
-PAYPAL_CLIENT_SECRET, PAYPAL_WEBHOOK_ID, WEBHOOK_PROCESSING_LOCK_MS,
-WEBHOOK_MAX_UNMATCHED_ATTEMPTS, SHUTDOWN_TIMEOUT_MS, FRONTEND_URL,
-ADMIN_URL, CORS_EXTRA_ORIGINS (optional), SMTP_HOST, SMTP_PORT, SMTP_USER,
-SMTP_PASS, SMTP_SECURE, SMTP_ALLOW_SELF_SIGNED, EMAIL_FROM, EMAIL_FROM_NAME,
-APP_NAME, CLOUDINARY_NAME, CLOUDINARY_API_KEY, CLOUDINARY_SECRET_KEY,
-ENABLE_DEBUG_ENDPOINTS (optional)`.
+PAYPAL_CLIENT_SECRET, PAYPAL_WEBHOOK_ID, PAYPAL_PAYEE_EMAIL (optional),
+PAYPAL_RESERVATION_TTL_MS, RESERVATION_SWEEP_INTERVAL_MS,
+WEBHOOK_PROCESSING_LOCK_MS, WEBHOOK_MAX_UNMATCHED_ATTEMPTS, SHUTDOWN_TIMEOUT_MS,
+FRONTEND_URL, ADMIN_URL, CORS_EXTRA_ORIGINS (optional), SMTP_HOST, SMTP_PORT,
+SMTP_USER, SMTP_PASS, SMTP_SECURE, SMTP_ALLOW_SELF_SIGNED, EMAIL_FROM,
+EMAIL_FROM_NAME, APP_NAME, CLOUDINARY_NAME, CLOUDINARY_API_KEY,
+CLOUDINARY_SECRET_KEY, ENABLE_DEBUG_ENDPOINTS (optional),
+RATE_LIMIT_MAX (optional)`.
 **Frontend (2):** `VITE_BACKEND_URL`, `VITE_PAYPAL_CLIENT_ID`.
 **Admin (1):** `VITE_BACKEND_URL`.
 
-`backend/.env.example` now documents **exactly** these (created 2026-10-26;
-the file the legacy templates pointed at had been missing): all 30 runtime
-vars, grouped, with code-verified defaults. `MONGODB_DB`,
-`CORS_EXTRA_ORIGINS` and `ENABLE_DEBUG_ENDPOINTS` are optional and default to
-`e-commerce` / empty / `false`. The old template's ~60 aspirational vars
-(Stripe, Razorpay, OAuth, Redis, Twilio, FCM…) are gone. The dead
+`backend/.env.example` documents **exactly** these (verified against `process.env`
+usage, 2026-10-26): grouped, with code-verified defaults. `MONGODB_DB`,
+`PAYPAL_PAYEE_EMAIL`, `CORS_EXTRA_ORIGINS`, `ENABLE_DEBUG_ENDPOINTS` and
+`RATE_LIMIT_MAX` are optional and default to `e-commerce` / unset (payee = the
+credential owner) / empty / `false` / `1000`. The old template's ~60 aspirational
+vars (Stripe, Razorpay, OAuth, Redis, Twilio, FCM…) are gone. The dead
 `services/analyticsService.js` (which read `ENABLE_ANALYTICS` /
 `PERFORMANCE_SAMPLE_RATE` and required nonexistent model files) was removed
 in the same hygiene pass — the live analytics endpoints need no
@@ -110,6 +117,8 @@ configuration. Note the Cloudinary names: `CLOUDINARY_NAME` /
 `CLOUDINARY_SECRET_KEY` (not `-CLOUD_NAME` / `-API_SECRET`).
 `PAYPAL_ENV=live` is the **only** path to live PayPal (`config/paypalEnv.js`);
 boot guardrails exit 1 on live+placeholder creds or prod-without-JWT_SECRET.
+`RATE_LIMIT_MAX` only raises the per-IP ceiling (default 1000/15 min); the
+load-test harness sets it on its disposable instance and nowhere else.
 
 ## 5. Terminology & content rules (mandatory for anything you write here)
 
@@ -201,6 +210,9 @@ When a history file contradicts `docs/`, **`docs/` wins.**
     `/api/user/*` shares the `authLimiter` (20 requests / 15 min / IP) and
     jest gives each spec file a fresh app instance, so keep each spec
     file's `/api/user/*` request count under 20 or later requests 429.
+    The limit is `AUTH_RATE_LIMIT_MAX`; the browser E2E backend raises it
+    **only** for its disposable instance (51 tests register from one IP).
+    Never raise it on a real deployment to make a suite pass.
 13. **Test-writing trap — admin pages render duplicate nodes**: the admin
     List/Orders pages render mobile + desktop layouts side by side
     (`lg:hidden` / `hidden lg:flex`), so product names and delete buttons
@@ -208,6 +220,31 @@ When a history file contradicts `docs/`, **`docs/` wins.**
     index, or assert on unique chrome. Likewise, RTL `getByText` matches
     only an element's DIRECT text nodes — split JSX (e.g.
     `<p><span>Method:</span> PayPal</p>`) never matches 'Method: PayPal'.
+14. **Refund truth is `refundStatus`, not `paymentStatus`.**
+    `paymentStatus:'refunded'` means the money is back. A PENDING refund,
+    timeout or 5xx is `refundStatus:'pending'` (order stays `completed`),
+    blocks a second automatic refund with `409
+    REFUND_PENDING_RECONCILIATION`, and is settled only by a signed
+    `PAYMENT.CAPTURE.REFUNDED` or manual reconciliation. Never mark an order
+    refunded because a request was sent.
+15. **Inventory restoration is durable.** Clearing `stockReserved` must be
+    the atomic claim that also sets `inventoryRestoration.status:'pending'`;
+    an item is credited only when `items[].stockRestored` is still false, and
+    marked only after the product write succeeds. A failed credit leaves
+    `reconciliation_required` and the sweep retries it — do not "fix" this
+    by clearing the flag or swallowing the error.
+16. **A capture must never resurrect a dead order.** Cancelled/refunded
+    orders are refused before the PayPal call and re-checked atomically in
+    the write; on the race, record the capture id for refund and alert — never
+    set `paymentStatus:'completed'`.
+17. **Order rooms are private.** `join_order_room` verifies ownership; the
+    typing relays require a joined room. Personal-room keys must come from a
+    populated `userId._id` / an ObjectId's `toHexString()` — `String(object)`
+    silently addressed `user_[object Object]` and dropped shopper events.
+18. **Fixtures are not a secret-scanner blind spot.** `scan-secrets.mjs`
+    scans test files too; only short/obviously synthetic values are waived.
+    Never add a real credential to a fixture, and do not re-add blanket
+    fixture exclusions to silence a finding.
 
 ## 8. Rules of engagement for changes
 

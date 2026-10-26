@@ -18,7 +18,9 @@ describe('ProductItems (product listing card)', () => {
       { contextValue: createMockContextValue({ currency: '$' }) },
     );
 
-    const link = screen.getByRole('link', { name: /View details for Wireless Earbuds/i });
+    // The card link has no overriding aria-label: its accessible name comes
+    // from the visible product name (WCAG 2.5.3), not a synthetic string.
+    const link = screen.getByRole('link', { name: /Wireless Earbuds/i });
     expect(link).toHaveAttribute('href', '/product/item-42');
     expect(screen.getByText('Wireless Earbuds')).toBeInTheDocument();
     expect(screen.getByText('$99')).toBeInTheDocument();

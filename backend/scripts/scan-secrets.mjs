@@ -11,14 +11,25 @@
 //   node scripts/scan-secrets.mjs --history  # also scan every commit's diff
 //
 // Exit codes: 0 = clean · 1 = at least one real-looking secret found.
+//
+// FIXTURE EXCLUSIONS: test files legitimately contain fabricated credentials,
+// but "it is a test file" must not be a blind spot — a real secret pasted into
+// a spec would previously have been ignored entirely. Fixture paths are now
+// scanned for assignments too; only values that are clearly synthetic (short,
+// or containing test/fake/sample/etc.) are waived. Credential-SHAPED patterns
+// (private keys, PayPal secrets, AWS keys, …) are never waived.
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-
-const HISTORY = process.argv.includes('--history');
+import { fileURLToPath } from 'node:url';
 
 // Values that are obviously templates — same spirit as
 // config/startupValidation.js's placeholder detection.
 const PLACEHOLDER = /^(your|change|change-me|replace|placeholder|example|todo|fixme|secure-|test-|e2e-|<|\$\{)/i;
+
+// Values a fixture may legitimately contain. Anything longer/random that does
+// not match this is reported even inside a test file.
+const SYNTHETIC_VALUE =
+  /(test|spec|e2e|dummy|fake|sample|fixture|stub|mock|unit|integration|placeholder|example|secret|jwt|password)/i;
 
 const PATTERNS = [
   { id: 'private-key', re: /-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----/ },
@@ -47,9 +58,9 @@ const FIXTURE_PATHS = [
   /(^|\/)\.env\.example$/, // documented templates
 ];
 
-const isFixturePath = (file) => FIXTURE_PATHS.some((re) => re.test(file));
+export const isFixturePath = (file) => FIXTURE_PATHS.some((re) => re.test(file));
 
-const isPlaceholder = (value) =>
+export const isPlaceholder = (value) =>
   PLACEHOLDER.test(value) ||
   /placeholder|example\.com|your-|sandbox|localhost:27017/i.test(value) ||
   // Synthetic values used in tests/scripts.
@@ -59,23 +70,34 @@ const isPlaceholder = (value) =>
 // A MongoDB URI is only a finding when it carries credentials.
 const uriHasCredentials = (value) => /^mongodb(\+srv)?:\/\/[^/@]+:[^/@]+@/.test(value);
 
-const findings = [];
-
-function scanText(text, where) {
+/**
+ * Analyse one text blob. Pure (no I/O), so the test suite can prove that a
+ * REAL-looking value inside a fixture path is still reported.
+ *
+ * Returns findings as { where, kind, detail } — never the value itself.
+ */
+export function analyzeText(text, where) {
+  const findings = [];
   const fixture = isFixturePath(where);
+
   for (const { id, re, skipInFixtures } of PATTERNS) {
     if (fixture && skipInFixtures) continue;
     if (re.test(text)) findings.push({ where, kind: id, detail: 'pattern match' });
   }
-  if (isFixturePath(where)) return; // fixtures documented above
+
   for (const match of text.matchAll(ASSIGNMENT)) {
     const [, name, value] = match;
     if (isPlaceholder(value)) continue;
     // Reject obvious non-secrets: env var references, shell expansion, booleans.
     if (/^(true|false|null|undefined|\$|\{\{)/i.test(value)) continue;
     if (name === 'MONGODB_URI' && !uriHasCredentials(value)) continue;
+    // Fixtures: waiver only for values that are obviously fabricated. A long,
+    // random value pasted into a spec is reported like anywhere else.
+    if (fixture && (SYNTHETIC_VALUE.test(value) || value.length < 24)) continue;
     findings.push({ where, kind: `assignment:${name}`, detail: 'non-placeholder value' });
   }
+
+  return findings;
 }
 
 function scanWorkingTree() {
@@ -86,9 +108,11 @@ function scanWorkingTree() {
     .filter((file) => !/package-lock\.json$|\.(png|jpe?g|gif|webp|ico|woff2?|zip)$/i.test(file));
 
   const trackedEnv = files.filter((file) => /(^|\/)\.env(\.|$)/.test(file) && !file.endsWith('.env.example'));
-  for (const file of trackedEnv) {
-    findings.push({ where: file, kind: 'tracked-env-file', detail: 'a .env file is tracked by git' });
-  }
+  const findings = trackedEnv.map((file) => ({
+    where: file,
+    kind: 'tracked-env-file',
+    detail: 'a .env file is tracked by git',
+  }));
 
   for (const file of files) {
     let text;
@@ -97,17 +121,19 @@ function scanWorkingTree() {
     } catch {
       continue; // binary/unreadable
     }
-    scanText(text, file);
+    findings.push(...analyzeText(text, file));
   }
+  return findings;
 }
 
 function scanHistory() {
   // Diff every commit, but only the lines an assignment/pattern can hide in.
-  const log = execSync(
-    'git log --all -p --no-color -- . ":(exclude)*package-lock.json"',
-    { encoding: 'utf8', maxBuffer: 1024 * 1024 * 256 }
-  );
+  const log = execSync('git log --all -p --no-color -- . ":(exclude)*package-lock.json"', {
+    encoding: 'utf8',
+    maxBuffer: 1024 * 1024 * 256,
+  });
 
+  const findings = [];
   let commit = 'unknown';
   let currentFile = 'unknown';
   for (const line of log.split('\n')) {
@@ -119,7 +145,9 @@ function scanHistory() {
     if (isFixturePath(currentFile)) continue;
     const added = line.slice(1);
     for (const { id, re } of PATTERNS) {
-      if (re.test(added)) findings.push({ where: `commit ${commit}`, kind: id, detail: 'historical match' });
+      if (re.test(added)) {
+        findings.push({ where: `commit ${commit}`, kind: id, detail: 'historical match' });
+      }
     }
     for (const match of added.matchAll(ASSIGNMENT)) {
       const [, name, value] = match;
@@ -133,28 +161,38 @@ function scanHistory() {
       });
     }
   }
+  return findings;
 }
 
-console.log(`Scanning ${HISTORY ? 'working tree + full git history' : 'working tree'}…`);
-scanWorkingTree();
-if (HISTORY) scanHistory();
+function main() {
+  const history = process.argv.includes('--history');
+  console.log(`Scanning ${history ? 'working tree + full git history' : 'working tree'}…`);
 
-if (findings.length === 0) {
-  console.log('✅ No real-looking secrets found.');
-  process.exit(0);
+  const findings = scanWorkingTree();
+  if (history) findings.push(...scanHistory());
+
+  if (findings.length === 0) {
+    console.log('✅ No real-looking secrets found.');
+    process.exit(0);
+  }
+
+  // Deduplicate identical findings (history repeats the same file many times).
+  const unique = new Map();
+  for (const finding of findings) {
+    unique.set(`${finding.where}|${finding.kind}`, finding);
+  }
+
+  console.error(`❌ ${unique.size} finding(s) — values are intentionally NOT printed:`);
+  for (const finding of [...unique.values()].slice(0, 60)) {
+    console.error(`   - ${finding.kind} at ${finding.where} (${finding.detail})`);
+  }
+  if (unique.size > 60) console.error(`   … and ${unique.size - 60} more`);
+  console.error('\nRotate any real credential that appears above, then purge it from history');
+  console.error('(see docs/devops/07-CREDENTIAL-ROTATION-RUNBOOK.md). This script never rewrites history.');
+  process.exit(1);
 }
 
-// Deduplicate identical findings (history repeats the same file many times).
-const unique = new Map();
-for (const finding of findings) {
-  unique.set(`${finding.where}|${finding.kind}`, finding);
+// Run only when executed directly (the unit test imports the pure helpers).
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main();
 }
-
-console.error(`❌ ${unique.size} finding(s) — values are intentionally NOT printed:`);
-for (const finding of [...unique.values()].slice(0, 60)) {
-  console.error(`   - ${finding.kind} at ${finding.where} (${finding.detail})`);
-}
-if (unique.size > 60) console.error(`   … and ${unique.size - 60} more`);
-console.error('\nRotate any real credential that appears above, then purge it from history');
-console.error('(see docs/devops/07-CREDENTIAL-ROTATION-RUNBOOK.md). This script never rewrites history.');
-process.exit(1);

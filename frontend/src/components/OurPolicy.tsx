@@ -134,7 +134,6 @@ const OurPolicy = () => {
             className="btn-modern btn-outline px-8 py-4 text-lg font-semibold rounded-2xl"
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
-            aria-label="Navigate to contact page for support"
           >
             Contact Support
           </motion.button>

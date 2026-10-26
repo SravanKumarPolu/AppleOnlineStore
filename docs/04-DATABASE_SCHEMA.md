@@ -92,22 +92,29 @@ not this index).
 | Field | Type | Rules / notes |
 |---|---|---|
 | `userId` | ObjectId ref `user` | Required |
-| `items[]` | Embedded subdocuments (`_id:false`) | `productId` (String — the product id at purchase time), `name`, `image`, `price`, `quantity` (≥1), `color` — **a snapshot**, immune to later catalog edits |
+| `items[]` | Embedded subdocuments (`_id:false`) | `productId` (String — the product id at purchase time), `name`, `image`, `price`, `quantity` (≥1), `color`, `stockRestored` (Boolean, default `false` — durable per-item marker set **only after** that item's units are back in the catalog; see `services/reservationService.js`) — **a snapshot**, immune to later catalog edits |
 | `address` | Embedded subdocument (`_id:false`) | Same address fields as the user address book (no `default`/`addedAt` here) — a snapshot of delivery data |
 | `paymentMethod` | String enum `COD` \| `PayPal` \| `Card` | Required; `'Card'` (added 2026-10-24, K-1 fix) = gateway-less recorded card intent — order stays `paymentStatus:'pending'` until the store completes it out-of-band |
-| `paymentStatus` | String enum `pending` \| `completed` \| `failed` \| `refunded` | default `pending`; `completed` set by verified capture/webhook; `refunded` only by out-of-band action (no refund flow) |
+| `paymentStatus` | String enum `pending` \| `completed` \| `failed` \| `refunded` | default `pending`; `completed` set by verified capture/webhook; `refunded` set only when a refund is **completed** (gateway `COMPLETED` or a recorded manual refund) |
+| `stockReserved` | Boolean | default `false`; `true` while the order holds a stock reservation. Cleared atomically as the **release claim** shared by cancel, refund and the expiry sweep — exactly one path can claim it |
+| `reservationExpiresAt` | Date / null | PayPal holds expire 30 min after creation (`PAYPAL_RESERVATION_TTL_MS`); `null` for COD/Card (no gateway hold) |
+| `inventoryRestoration` | Subdocument | Durable release/restoration state: `status` (`none` \| `pending` \| `completed` \| `reconciliation_required`), `attempts`, `lastError`, `startedAt`, `completedAt`. A failed product credit stays `reconciliation_required` and is retried by every sweep — the obligation is never dropped |
 | `orderStatus` | String enum `ORDER_STATUSES` | default `'Order Placed'`; the exported constant `ORDER_STATUSES` in `orderModel.js` is the single source of truth (6 values) |
 | `subtotal`, `shipping`, `total` | Number | Required; `shipping` default **10** (fixed fee, set by controller); `total = subtotal + shipping` |
 | `currency` | String | default `'USD'`; the only currency in the system |
 | `paypalOrderId` / `paypalCaptureId` / `paypalTransactionId` | String | `sparse: true` — absent for COD orders |
+| `refundStatus` | String enum `pending` \| `completed` \| `failed` / null | default `null`. `pending` = requested but **not confirmed** (PayPal PENDING or indeterminate transport failure); blocks a second automatic refund. `completed` = money returned. `failed` = definitive provider rejection, safe to retry |
+| `refundedAt` / `refundId` / `refundMethod` / `refundReason` / `refundAttempts` / `refundLastError` | Date / String / `paypal` \| `manual` / String / Number / String | Refund bookkeeping; `refundedAt` is stamped only on completion |
 | `trackingNumber`, `estimatedDelivery`, `deliveredAt` | String / Date / Date | `sparse`; only `deliveredAt` is written (stamped when status → Delivered) — tracking fields have no writer |
 | `notes` | String | optional |
 | `isActive` | Boolean | default `true`; soft-delete flag honored by queries |
 | `createdAt` / `updatedAt` | Date | timestamps |
 
 Indexes: `{userId:1, createdAt:-1}`, `{paymentStatus:1}`, `{orderStatus:1}`,
-`{createdAt:-1}`. (Sparse PayPal fields are indexed by their field
-declarations.)
+`{createdAt:-1}`, `{userId:1, idempotencyKey:1}` (unique, partial on string keys),
+`{paymentStatus:1, stockReserved:1, reservationExpiresAt:1}` (expiry sweep),
+`{'inventoryRestoration.status':1}` (restoration retry sweep). (Sparse PayPal
+fields are indexed by their field declarations.)
 
 Statics: `findByUser` (paginated), `findAllOrders` (paginated + user
 population), `findByPayPalOrderId`, `findByPayPalCaptureId`. Instance:

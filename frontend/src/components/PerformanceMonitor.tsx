@@ -59,16 +59,17 @@ const PerformanceMonitor = () => {
 
   const getPerformanceColor = (value: number, threshold: number) => {
     if (value <= threshold) return 'text-green-700';
-    if (value <= threshold * 1.5) return 'text-yellow-600';
-    return 'text-red-600';
+    // yellow-600 on white is ~3.1:1 (fails WCAG AA); yellow-800 is ~6.9:1.
+    if (value <= threshold * 1.5) return 'text-yellow-800';
+    return 'text-red-700';
   };
 
   return (
     <AnimatePresence>
       <motion.div
-        initial={{ opacity: 0, x: 300 }}
-        animate={{ opacity: 1, x: 0 }}
-        exit={{ opacity: 0, x: 300 }}
+        initial={{ opacity: 0, y: -12 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -12 }}
         className="fixed top-4 right-4 z-50 bg-white rounded-lg shadow-xl border border-gray-200 p-4 max-w-xs"
       >
         <div className="flex items-center justify-between mb-3">
@@ -115,7 +116,7 @@ const PerformanceMonitor = () => {
         </div>
 
         <div className="mt-3 pt-3 border-t border-gray-200">
-          <div className="flex items-center gap-2 text-xs text-gray-500">
+          <div className="flex items-center gap-2 text-xs text-gray-600">
             <div className="w-2 h-2 bg-green-500 rounded-full"></div>
             <span>Good</span>
             <div className="w-2 h-2 bg-yellow-500 rounded-full"></div>
