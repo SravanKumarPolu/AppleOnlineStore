@@ -154,13 +154,45 @@ Alerts to route: `INVENTORY RESTORATION ALERT [unresolved_stock_restoration]`,
 `[sweep_unresolved]`. These mean sellable stock is temporarily missing —
 they are not routine noise.
 
-**Residual (honest):** this is a retryable obligation, not a distributed
-transaction. If the process dies after a product credit but before the
-per-item `stockRestored` marker is written, a later retry can credit that item
-twice. The window is one write wide, the state stays visible
-(`pending`/`reconciliation_required`), and the alert gives an operator the
-exact order/product. Eliminating it would require a product-side idempotency
-ledger (not present).
+**Exactly-once guarantee (2026-10-26):** the stock increment and its proof are
+one atomic `findOneAndUpdate` on the product document: `$inc: {stockQuantity}`
+plus `$addToSet: {restorationCredits: '<orderId>:<itemIndex>'}` with a
+`restorationCredits: {$ne: creditId}` filter. MongoDB guarantees single-document
+atomicity, so the credit and the evidence that it was applied can never
+disagree after a crash or a concurrent retry — no replica set or multi-document
+transaction is required. `items[].stockRestored` on the order is bookkeeping
+only; losing it is harmless because the retry proves the credit from the ledger.
+
+**Growth / pruning:** the ledger keeps one short string per restored order line
+per product (typically tens per day across the catalog). `reservationDebits` is
+bounded by **active** holds — an entry is created with the debit and removed by
+the credit that returns it — so it does not grow over time. Do **not** prune
+`restorationCredits` entries while an order's `inventoryRestoration.status` is
+`pending` or `reconciliation_required`; an entry is only provably disposable
+long after its order reached `completed`. If a retention policy is ever needed,
+prune only by order id after confirming there is no unresolved obligation, and
+record it here.
+
+**Creation-time reservation (K-21, fixed 2026-10-26 fourth pass):** the
+checkout path no longer decrements before the order exists. The order is
+inserted as a **draft** (`stockReservation.status:'pending'`, `stockReserved:false`),
+each line's decrement writes a `<orderId>:<itemIndex>` marker in the SAME
+product update (`reservationDebits`), and the reservation is then committed
+atomically (`stockReserved:true`, status `reserved`). A draft that never
+committed is settled by `releaseAbandonedReservations()` — part of the same
+sweep, at boot and every `RESERVATION_SWEEP_INTERVAL_MS` — which credits
+exactly the marked lines (marker-guarded, so a retry or a racing sweep cannot
+double-credit), then deletes the draft. A draft younger than 2 minutes
+(`ABANDONED_RESERVATION_MS`) is left alone so a live request is never swept.
+
+```bash
+# Uncommitted drafts and their state (Mongo shell)
+db.orders.find({'stockReservation.status': {$in:['pending','releasing','failed']}},
+  {_id:1, 'stockReservation':1, 'items.productId':1, 'items.quantity':1})
+```
+
+Alert to route: `INVENTORY RESERVATION ALERT [unresolved_draft_release]` — a
+draft line could not be credited and is retried every sweep.
 
 ## 6. Credential rotation & PayPal validation (owner runbooks)
 

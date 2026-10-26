@@ -5,7 +5,7 @@
 > [docs/10-FINAL-STABILIZATION-REPORT.md](./10-FINAL-STABILIZATION-REPORT.md);
 > the preserved pre-fix baseline is
 > [devops/00-PRE-DEVOPS-QUALITY-BASELINE.md](./devops/00-PRE-DEVOPS-QUALITY-BASELINE.md)).
-> Current: **backend 41 suites / 404 tests PASS · frontend 24 files / 125
+> Current: **backend 43 suites / 441 tests PASS · frontend 24 files / 125
 > tests PASS · admin 13 files / 70 tests PASS · storefront E2E 3 spec files /
 > 17 tests × Chromium/Firefox/WebKit = 51 PASS (real browsers vs the real
 > backend).** This file is the authoritative command reference — several npm
@@ -61,7 +61,7 @@ security decision and DB write executes for real.
 ### 1b. Additional backend suites (present since the 2026-10-24/25 passes; verified 2026-10-26)
 
 The table in §1 lists only the suites that existed when this file was first
-written. The suite has since grown to **41 spec files / 404 tests**; the
+written. The suite has since grown to **42 spec files / 416 tests**; the
 remainder are:
 
 | Spec | Focus |
@@ -82,10 +82,12 @@ remainder are:
 | `shopperAdminTokenBoundary.spec.js` | Admin tokens rejected on shopper routes (403) and vice versa |
 | `modelIndexIntegrity.spec.js` | **New 2026-10-26** — index-name conflicts, AF-1 unique partial index, `connectDB` awaits index build |
 | `refundWorkflow.spec.js` | **15** — authz; full/partial rules; atomic refund claim (concurrent requests issue exactly one gateway refund); `PENDING` → 202 + not refunded; timeout → reconcilable `pending` + retry blocked; definitive 4xx → `failed` + safe retry; signed `PAYMENT.CAPTURE.REFUNDED` completes/failed/mismatch, duplicate does not double-credit stock |
-| `reservationExpiry.spec.js` | **10** — TTL; expired hold released once; live/COD/paid untouched; late capture after cancellation; **failed product credit stays owed and is retried**; multi-item at-most-once; deleted product settles; capture refused pre-flight and across an in-flight cancel |
+| `reservationExpiry.spec.js` | **25** — TTL; expired hold released once; live/COD/paid untouched; late capture after cancellation; **failed product credit stays owed and is retried**; multi-item at-most-once; deleted product settles; **crash after the product credit but before the order marker does not double-credit**; two concurrent workers credit once; ledger hidden from the product API; capture refused pre-flight and across an in-flight cancel. **K-21 (creation-time) cases:** grace window respected; crash before any debit; crash after a partial debit (only that line credited); crash after all debits before the commit; committed holds never released; two racing sweeps credit once; failed credit keeps the draft and retries; debit ledger hidden from the product API; a real checkout commits + records its marker; an unreservable checkout leaves no order; the same debit released twice credits once |
 | `socketRealtime.spec.js` | **7** — real server↔client: shopper + admin delivery, anonymous/invalid token refused, reconnect, populated-user update, **foreign order-room join refused**, two-tab disconnect keeps registration |
 | `secretScanner.spec.js` | **7** — fixture paths cannot hide real assignments; credential-shaped patterns never waived; placeholders/credential-less URIs ignored |
 | `sandboxScriptSafety.spec.js` | **2** — `--create` / `--capture` refuse to run with `PAYPAL_ENV=live` (exit 2, no request) |
+| `distributionArchive.spec.js` | **8** — archive policy: `.env`/keys/logs/build dirs rejected, clean tree passes, ZIP only via `git archive` after validation, dirty tree refused, values never printed |
+| `danglingBlobAudit.spec.js` | **7** — unreachable-object audit: env/JSON/`export` parsing, credential-key filtering, LIVE/STALE/UNKNOWN classification against the current `.env`, identifiers reported apart from secrets, **fail-closed when no baseline is available**, and every real credential key covered |
 
 ## 2. Frontend suite (vitest)
 
@@ -191,9 +193,14 @@ PayPal SDK/approve-link wiring remains covered by mocked-edge backend specs
 | `cd backend && npm run test:security` | ✅ The regression suite (canonical) |
 | `cd backend && node --experimental-vm-modules node_modules/.bin/jest --runInBand` | ✅ Same thing, spelled out (plain `npx jest` **fails** on ESM spec imports — expected) |
 | `cd backend && npm test` | ⚠️ **Alias of the Jest suite since 2026-10-25** (not the smoke runner). The live-MongoDB/SMTP runner is `npm run test:smoke` |
-| `cd backend && npm run lint` / `build` | ✅ lint clean · `build` runs `scripts/check-syntax.mjs` (`node --check` over every first-party file — replaced the old echo on 2026-10-26) |
+| `cd backend && npm run lint` / `build` | ✅ lint clean · `build` runs `scripts/check-syntax.mjs` (`node --check` over 100 first-party files — replaced the old echo on 2026-10-26) |
+| `cd backend && npm run security:secrets` | ✅ Tracked tree **+ full git history** secret scan; never prints values (`--history` by default) |
+| `cd backend && npm run security:distribution` | ✅ Archive policy gate: tracked set only, rejects `.env`/keys/logs/build dirs, no values printed; `--out <zip>` builds via `git archive` only from a clean HEAD |
+| `cd backend && npm run security:audit` | ✅ Read-only `npm audit` (never mutates the tree) |
+| `cd backend && npm run verify:startup` | ✅ Real child process: ready/live, DB selection, SIGTERM exit 0, no credentials in the startup log |
+| `cd backend && npm run paypal:sandbox -- --check` | ⛔ Exits 2 here (`PAYPAL_WEBHOOK_ID` missing) — a real block, not a test failure; `--create`/`--capture` refuse under `PAYPAL_ENV=live` |
 | `cd frontend && npm run lint` / `type-check` / `test -- --run` / `build` | ✅ All pass (PWA precache emitted) |
-| `cd frontend && npm run test:e2e` | ✅ **Real since 2026-10-24** — Playwright vs the orchestrated real stack (§2c); first run downloads the Chromium binary |
+| `cd frontend && npm run test:e2e` | ✅ **Real since 2026-10-24** — Playwright vs the orchestrated real stack (§2c); first run downloads the browser binaries. Ports are overridable: `E2E_PORT=3101 E2E_WEB_PORT=5273` when the default 3001/5173 are occupied |
 | `cd frontend && npm run test:e2e:ui` | ⚠️ Playwright UI mode — needs a display; use plain `test:e2e` headless |
 | `cd admin && npm run lint` / `build` / `type-check` | ✅ All clean (`type-check` added 2026-10-25, K-7 fix) |
 | `cd admin && npm run test -- --run` | ✅ Real since 2026-10-24 (vitest, 13 files / 70 tests — incl. the K-6 MobileNav/NotFound suites); bare `npm test` starts **watch mode** |
@@ -298,3 +305,64 @@ honestly remains:
 - Any new webhook behavior must extend the state-machine specs — the
   regression these tests encode (falsely acknowledged retries) was a real
   production-class bug.
+
+## 7. Manual accessibility acceptance checklist (owner execution — NOT yet run)
+
+Automated axe coverage (`a11y.spec.ts` × 3 engines) is necessary, not
+sufficient. Execute once per release and record date + result next to each
+row. Equipment: VoiceOver (macOS/iOS) or NVDA + Chrome, keyboard only, browser
+zoom 200 %, `prefers-reduced-motion` emulation.
+
+**Global (every screen):**
+
+| # | Check | Pass criterion |
+|---|---|---|
+| G1 | Keyboard-only pass | Every interactive element reachable in DOM order; visible focus never removed; no traps (modals: Esc closes, focus returns to trigger) |
+| G2 | VoiceOver pass | Page title announced; `header/nav/main/footer` landmarks present; images announce meaningful alt or are explicitly decorative; no bare-icon controls |
+| G3 | Zoom 200 % | No horizontal scrolling, no clipped or truncated controls |
+| G4 | Form errors | Submitting invalid input moves focus to the first error and the message is announced |
+| G5 | Motion | Reduced-motion preference disables non-essential animation |
+
+**Per screen:**
+
+| Screen | Keyboard | VoiceOver |
+|---|---|---|
+| Home | nav → hero CTAs → product cards; Enter opens a product | cards announce "name, price, link"; banners do not trap focus |
+| Collection | filter toggles keyboard-operable; active state announced; pagination reachable | filter groups announce role + state; result count perceivable |
+| Product detail | quantity, color variant, add-to-cart, related products reachable | price/availability announced; variant change announced |
+| Cart | qty steppers operable; remove buttons have real names (not icon-only) | line totals announced on change |
+| Login / Signup | tab order matches visual order; password visibility toggle keyboard-operable | labels announced (never placeholder-only); errors announced |
+| Forgot / Reset password | same as Login | token-expired error announced |
+| Checkout (address + PlaceOrder) | saved-address cards selectable; "add new address" form reachable; Place Order reachable without pointer | selected address announced; required fields announced; summary perceivable |
+| PayPal window | external (PayPal-owned) — verify it opens, completes, and focus returns sensibly on success/cancel | n/a |
+| Orders history / detail | rows and links reachable | status announced as text, never color-only |
+| Profile | fields + save reachable | save confirmation announced |
+| 404 | focus lands in content; "go home" link reachable | page purpose announced |
+| Admin Login | as Login | as Login |
+| Admin Dashboard / Orders / Add / List / Analytics | tables, buttons and delete-confirms keyboard-operable | row context announced (which order/product); toasts announced |
+
+Do **not** mark a row passed without executing it; record issues found.
+
+## 8. Staging capacity test plan (before live deployment — local numbers are not capacity claims)
+
+The committed local artifacts (`docs/testing/load-results-2026-10-26-*.json`)
+measure this machine against an in-memory MongoDB: they prove the harness and
+catch regressions, **not** production capacity. Before go-live:
+
+1. Provision staging on the production topology: same Node version, real
+   MongoDB (same major version, indexes built), real TLS/reverse proxy,
+   realistic seed with **deep stock**.
+2. Run the same harness against it (rate limits stay production-real):
+   ```bash
+   LOAD_TEST_BASE=https://<staging-host> npm run load:test -- --max-vu 250 --duration 30
+   ```
+3. Go-live capacity gates (all must hold at the expected peak concurrency):
+   - error rate < 1 % over a sustained 15-minute run;
+   - p95 < 1 s (reads) / < 2 s (checkout writes) — compare shape against the
+     local artifact, not absolute parity;
+   - the harness's stock-consistency assertion stays 100 %;
+   - `/health/ready` never flaps; Mongo connections below pool limit; memory
+     stable (no OOM restarts);
+   - no unexpected 429s (rate limiting configured deliberately).
+4. Save the artifact as `docs/testing/load-results-<date>-staging.json` and
+   reference it from `docs/10` before re-issuing the readiness decision.

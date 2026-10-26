@@ -23,7 +23,7 @@ const authUser = async (req, res, next) => {
     }
 
     try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
 
       // Phase 3 security fix: shopper middleware must NEVER accept admin
       // tokens. Admin tokens (type:'admin', issued by POST /api/user/admin)
@@ -111,7 +111,7 @@ const authAdmin = async (req, res, next) => {
     }
 
     try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
       
       // Check if it's an admin token
       if (decoded.type === 'admin' && decoded.role === 'admin') {

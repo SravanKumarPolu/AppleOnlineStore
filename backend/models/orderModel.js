@@ -122,6 +122,28 @@ const orderSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+  // Creation-time reservation state (K-21). The order document is inserted as
+  // a DRAFT (`status:'pending'`, `stockReserved:false`) BEFORE any unit is
+  // debited; each line's decrement writes a `<orderId>:<index>` marker on the
+  // product in the same atomic update. A crash at any point leaves a
+  // recoverable draft that the sweep settles — the alternative (decrementing
+  // first, then inserting the order) loses units with nothing to reconcile.
+  //   pending   → draft inserted, reservation in progress
+  //   reserved  → every line debited; this order owns the hold (`stockReserved`)
+  //   releasing → the sweep claimed an uncommitted draft and is crediting it
+  //   failed    → a credit failed; retried on every sweep (the draft is deleted
+  //               once every line is settled, so 'released' is not a stored state)
+  stockReservation: {
+    status: {
+      type: String,
+      enum: ['none', 'pending', 'reserved', 'releasing', 'failed'],
+      default: 'none'
+    },
+    startedAt: { type: Date, default: null },
+    completedAt: { type: Date, default: null },
+    attempts: { type: Number, default: 0 },
+    lastError: { type: String, default: null }
+  },
   // Durable release/restoration obligation. `stockReserved` is the atomic
   // claim flag; this object records whether the units actually made it back
   // into the catalog, so a failed product update is retried instead of being
@@ -249,6 +271,8 @@ orderSchema.index({ createdAt: -1 });
 orderSchema.index({ paymentStatus: 1, stockReserved: 1, reservationExpiresAt: 1 });
 // Reconciliation index: restorations still owed after a failed credit/crash.
 orderSchema.index({ 'inventoryRestoration.status': 1 });
+// Sweep lookup for uncommitted reservation drafts (K-21).
+orderSchema.index({ 'stockReservation.status': 1, 'stockReservation.startedAt': 1 });
 
 // Instance method to update order status
 orderSchema.methods.updateStatus = function(newStatus) {

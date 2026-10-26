@@ -107,8 +107,8 @@ Verified implementation: signature verification (PayPal verify-webhook-signature
 | Double fulfillment from webhook + capture race | Capture amount/currency verified against order total before any write; webhook match requires capture-id or signed related-order-id; order update is idempotent; unmatched events retried within a bounded budget then alerted |
 | Payment amount tampering | Server-side pricing only; client prices discarded (invalid supplied prices rejected) |
 | Refunded orders clobbered by late webhook | Webhook update filter excludes non-`pending/failed` paymentStatus unless backfilling the capture id |
-| Stock leak on order-save failure | `releaseStock` runs on save failure and on duplicate-key replay loss |
-| Cancel double-restore | `stockReserved` flag cleared in the same atomic update that claims the cancellation — restores exactly once; pre-flag legacy orders never restore |
+| Stock leak on order-save failure | **Closed 2026-10-26 (K-21):** the order draft is persisted first, each decrement carries a `<orderId>:<index>` debit marker in the same product update, the reservation is committed conditionally, and the sweep credits abandoned drafts exactly once |
+| Cancel double-restore | `stockReserved` flag cleared in the same atomic update that claims the cancellation; the credit itself is exactly-once via the product `restorationCredits` ledger, retried by the sweep if it fails |
 | Interrupted webhook processing | `webhookevents` state machine re-acquires `failed`/`unresolved`/stale-`processing` records; duplicates acknowledged only when `completed` |
 | Crash-before-ready | Startup fails fast (config guardrails + DB ping) before `listen`; readiness endpoint reflects DB state |
 | Unclean shutdown | Bounded shutdown budget; force-destroy of keep-alive sockets; non-zero exit when cleanup exceeded budget |

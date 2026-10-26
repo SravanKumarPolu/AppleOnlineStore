@@ -38,7 +38,7 @@ const About = () => {
           >
             <img
               src={assets.about_img}
-              alt="About Apple Store"
+              alt="About NovaCart"
               className="w-full rounded-2xl shadow-2xl hover:shadow-3xl transition-all duration-500 transform hover:scale-105"
             />
           </motion.div>
@@ -55,7 +55,7 @@ const About = () => {
               animate={{ opacity: 1 }}
               transition={{ duration: 0.6, delay: 0.8 }}
             >
-              At the Apple Store, we invite you to explore our latest range of products, from iPhones to Macs, designed to fit your lifestyle. Whether you're upgrading your current device or discovering new innovations, we have everything you need. Follow us for the latest updates, tech tips, and exclusive offers. Experience the future of technology today with Apple.
+              At NovaCart, we invite you to explore our latest range of products, from iPhones to Macs, designed to fit your lifestyle. Whether you're upgrading your current device or discovering new innovations, we have everything you need. Follow us for the latest updates, tech tips, and exclusive offers. Experience the future of technology today with Apple.
             </motion.p>
             
             <motion.p 

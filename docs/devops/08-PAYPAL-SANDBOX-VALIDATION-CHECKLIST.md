@@ -1,9 +1,36 @@
 # 08 — PayPal Sandbox Validation Checklist (Pre-Production Blocker: *Pending*)
 
-**Status:** READY TO EXECUTE — every scenario below can be run against the
-sandbox topology with no code changes. Requires: a publicly reachable HTTPS
-backend (staging host or a tunnel such as `ngrok http 4000`) and sandbox
-credentials.
+**Status (2026-10-26, second pass): ⛔ BLOCKED — do not mark complete.**
+Offline behaviour is covered by the mocked suites, and the helper proved that
+credentials and order creation work, but the required create → approve → capture
+→ signed webhook → reconciled-order lifecycle cannot be evidenced here.
+
+| Check | Result (2026-10-26) |
+|---|---|
+| `PAYPAL_ENV` selection | ✅ `sandbox` (`PayPal environment: SANDBOX` in the startup report) |
+| Sandbox credentials present | ✅ client id + secret present, not placeholders |
+| Sandbox order creation | ✅ **verified** — order `7HC18984P46126319`, status `CREATED` (no charge) |
+| Buyer approval (sandbox buyer) | ⛔ BLOCKED — no sandbox buyer session; order left unapproved |
+| Capture + capture id | ⛔ BLOCKED — requires an approved order |
+| `PAYPAL_WEBHOOK_ID` | ⛔ MISSING — `--check` exits 2; every webhook would be rejected |
+| Public HTTPS webhook endpoint | ⛔ BLOCKED — no public host/tunnel in this environment |
+| Signed webhook received over HTTPS | ⛔ BLOCKED — depends on the two rows above |
+| Duplicate / delayed / out-of-order events | 🟡 Offline specs only (`webhookIdempotency`, `refundWorkflow`, `reservationExpiry`) |
+| Invalid signature rejected | 🟡 Offline spec only |
+| Unmatched capture reconciliation | 🟡 Offline specs only (`webhookUnmatchedCapture`) |
+| Capture timeout / provider failure | 🟡 Mocked gateway seam only |
+| Buyer cancellation | 🟡 Mocked/expiry specs only |
+| Refund with real sandbox transaction | ⛔ BLOCKED — requires approval + capture first |
+
+The helper **refuses** `--create` / `--capture` when `PAYPAL_ENV=live` (exit 2),
+so a sandbox validation run can never create or capture a live payment. Locked
+by `sandboxScriptSafety.spec.js`.
+
+**Evidence required to close:** real sandbox create → buyer approve → capture
+with the capture id persisted on the order → a genuinely signed
+`PAYMENT.CAPTURE.COMPLETED` accepted over HTTPS → duplicate and delayed copies
+handled → an unmatched capture reconciled. Do not infer any of this from mocked
+suites or from the order-creation step above.
 
 **Purpose:** validate the REAL PayPal integration end-to-end — signature
 verification, capture, and the unmatched-capture recovery behavior added in the
@@ -29,7 +56,8 @@ WEBHOOK_MAX_UNMATCHED_ATTEMPTS=10      # default; lower (e.g. 3) to shorten retr
       (extra warnings mean a credential is missing/placeholder — fix first)
 - [ ] Developer Dashboard → Sandbox → your app → **Webhooks → Add Webhook**:
       URL `https://<host>/api/orders/paypal/webhook`, events `PAYMENT.CAPTURE.COMPLETED`
-      (+ refund events if in scope). Copy the webhook ID into `.env` if not already.
+      **and** `PAYMENT.CAPTURE.REFUNDED` (refunds are reconciled through the signed
+      event; see `docs/05` §6.2). Copy the webhook ID into `.env` if not already.
 - [ ] Sandbox buyer + facilitator test accounts exist under Dashboard → Sandbox → Test Accounts
 
 ## 1. Happy path — capture + verified webhook

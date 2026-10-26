@@ -11,7 +11,7 @@
 
 | Doc | Content |
 |---|---|
-| [docs/01-PRD.md](docs/01-PRD.md) | Feature catalog with status labels; known defects K-1…K-12; non-goals |
+| [docs/01-PRD.md](docs/01-PRD.md) | Feature catalog with status labels; known defects K-1…K-16; non-goals |
 | [docs/02-APP_FLOWS.md](docs/02-APP_FLOWS.md) | Shopper/admin/system flows as traced through source |
 | [docs/03-TECH_ARCHITECTURE.md](docs/03-TECH_ARCHITECTURE.md) | Stacks, module map, cross-cutting decisions, **dead-code map** |
 | [docs/04-DATABASE_SCHEMA.md](docs/04-DATABASE_SCHEMA.md) | 11 MongoDB collections, fields, indexes, references |
@@ -20,7 +20,9 @@
 | [docs/07-TESTING_PLAN.md](docs/07-TESTING_PLAN.md) | Test inventory, **command truth table**, traceability matrix, gaps |
 | [docs/08-SECURITY.md](docs/08-SECURITY.md) | Auth model, fixed vulns, risk register S1–S7, secrets rules |
 | [docs/09-OPERATIONS.md](docs/09-OPERATIONS.md) | Health/shutdown, webhook ops runbook, incident playbook |
-| [docs/10-FINAL-STABILIZATION-REPORT.md](docs/10-FINAL-STABILIZATION-REPORT.md) | 2026-10-26 acceptance report: defects fixed, executed gates, PayPal/rotation blockers, CONDITIONAL PASS |
+| [docs/10-FINAL-STABILIZATION-REPORT.md](docs/10-FINAL-STABILIZATION-REPORT.md) | 2026-10-26 acceptance report in four passes: defects fixed, executed gates with exit codes, per-credential rotation verification, PayPal/rotation blockers, CONDITIONAL PASS (§18 = fourth pass: dangling-object audit, functional old-credential proof, K-21 closed) |
+| `docs/architecture/**` | Supplementary verified diagrams (system, auth, checkout/payment, components, DB relationships, DevOps baseline, audit). Subordinate to `docs/01`–`10`; checkout + DB files re-checked 2026-10-26 |
+| `docs/testing/**` | Dated test **evidence** (reports, coverage matrix, load JSON). Accurate for the run it records, not the current gate — `docs/07` + `docs/10` win |
 
 **Preserved Phase 1 engineering records (`docs/devops/01…09`, read-only
 history, accurate for their scope):** architecture, security baseline,
@@ -31,7 +33,7 @@ gates execution report (2026-10-24 — rotation/validation status).
 **Current pre-DevOps gate:** the preserved Phase 1 baseline is
 [docs/devops/00-PRE-DEVOPS-QUALITY-BASELINE.md](docs/devops/00-PRE-DEVOPS-QUALITY-BASELINE.md)
 (36 suites / 359 tests, executed 2026-10-26 **before** the stabilization pass).
-The post-fix execution — 41 backend suites / 404 tests, 24 storefront files /
+The post-fix execution — 43 backend suites / 441 tests, 24 storefront files /
 125 tests, 13 admin files / 70 tests, 17 browser E2E tests × Chromium/Firefox/
 WebKit (51/51), plus the corrected load artifact — is recorded in
 [docs/10-FINAL-STABILIZATION-REPORT.md](docs/10-FINAL-STABILIZATION-REPORT.md).
@@ -55,12 +57,17 @@ NovaCart/
 ## 3. Command truth table (verified — copy these, not package.json)
 
 ```bash
-# Backend regression suite — THE canonical gate (41 suites / 404 tests)
+# Backend regression suite — THE canonical gate (43 suites / 441 tests)
 cd backend && npm run test:security
 # equivalent: node --experimental-vm-modules node_modules/.bin/jest --runInBand
 
 cd backend && npm run lint            # clean
-cd backend && npm run build           # real syntax check (node --check over 90 files)
+cd backend && npm run build           # real syntax check (node --check over 100 files)
+cd backend && npm run security:secrets       # tracked files + full history; never prints values
+cd backend && npm run security:dangling      # unreachable git objects; exits 1 while one holds a LIVE credential
+cd backend && npm run security:distribution  # archive policy: no .env/keys/logs (git-archive ZIPs only after this passes)
+cd backend && npm run security:rotation -- --exposed-blob <sha>   # per provider: current works / exposed revoked
+cd backend && npm run verify:old-credentials -- --exposed-blob <sha>  # old admin password + old JWT secret must both be 401
 cd frontend && npm run lint && npm run type-check && npm run test -- --run   # 24 files / 125 tests (vitest 5)
 cd frontend && npm run build          # PWA build
 cd frontend && npm run test:e2e       # real-browser E2E (Playwright, 3 spec files / 17 tests × 3 engines = 51: COD + Card + UI audit + a11y)
@@ -91,7 +98,7 @@ cd admin    && npm run dev            # admin panel (port 5174)
 
 ## 4. Environment variables (the only real ones)
 
-**Backend (34):** `NODE_ENV, PORT, MONGODB_URI, MONGODB_DB (optional),
+**Backend (35):** `NODE_ENV, PORT, MONGODB_URI, MONGODB_DB (optional),
 JWT_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD, PAYPAL_ENV, PAYPAL_CLIENT_ID,
 PAYPAL_CLIENT_SECRET, PAYPAL_WEBHOOK_ID, PAYPAL_PAYEE_EMAIL (optional),
 PAYPAL_RESERVATION_TTL_MS, RESERVATION_SWEEP_INTERVAL_MS,
@@ -100,15 +107,16 @@ FRONTEND_URL, ADMIN_URL, CORS_EXTRA_ORIGINS (optional), SMTP_HOST, SMTP_PORT,
 SMTP_USER, SMTP_PASS, SMTP_SECURE, SMTP_ALLOW_SELF_SIGNED, EMAIL_FROM,
 EMAIL_FROM_NAME, APP_NAME, CLOUDINARY_NAME, CLOUDINARY_API_KEY,
 CLOUDINARY_SECRET_KEY, ENABLE_DEBUG_ENDPOINTS (optional),
-RATE_LIMIT_MAX (optional)`.
+RATE_LIMIT_MAX (optional), AUTH_RATE_LIMIT_MAX (optional)`.
 **Frontend (2):** `VITE_BACKEND_URL`, `VITE_PAYPAL_CLIENT_ID`.
 **Admin (1):** `VITE_BACKEND_URL`.
 
 `backend/.env.example` documents **exactly** these (verified against `process.env`
 usage, 2026-10-26): grouped, with code-verified defaults. `MONGODB_DB`,
-`PAYPAL_PAYEE_EMAIL`, `CORS_EXTRA_ORIGINS`, `ENABLE_DEBUG_ENDPOINTS` and
-`RATE_LIMIT_MAX` are optional and default to `e-commerce` / unset (payee = the
-credential owner) / empty / `false` / `1000`. The old template's ~60 aspirational
+`PAYPAL_PAYEE_EMAIL`, `CORS_EXTRA_ORIGINS`, `ENABLE_DEBUG_ENDPOINTS`,
+`RATE_LIMIT_MAX` and `AUTH_RATE_LIMIT_MAX` are optional and default to
+`e-commerce` / unset (payee = the credential owner) / empty / `false` / `1000` /
+`20`. The old template's ~60 aspirational
 vars (Stripe, Razorpay, OAuth, Redis, Twilio, FCM…) are gone. The dead
 `services/analyticsService.js` (which read `ENABLE_ANALYTICS` /
 `PERFORMANCE_SAMPLE_RATE` and required nonexistent model files) was removed
@@ -142,7 +150,7 @@ load-test harness sets it on its disposable instance and nowhere else.
 | Path | Status |
 |---|---|
 | `AGENTS.md`, `README.md`, `DEPLOYMENT_CHECKLIST.md` (warning header), `docs/**` | **Truth** (maintained) |
-| `docs/devops/**` | **Truth, preserved** (Phase 1 records — do not edit; supersede via `docs/`) |
+| `docs/devops/**` | **Truth, preserved** (Phase 1 records — do not rewrite their findings; dated status addenda only when the owner explicitly asks, as on 2026-10-26 for 07/08) |
 | `PAYPAL_*.md`, `ANALYTICS_README.md`, `AUTHENTICATION_FEATURES.md`, `UI_UX_*.md`, `SETUP_*.md`, `COMPREHENSIVE_SETUP_GUIDE.md`, `loading-issue-fix.md`, `cart-persistence-solution.md`, `SECURITY_GATE_PLAN.md` (except when referenced as the S1 procedure source), `PHASE1_LINTING_TESTING_REPORT.md` | **History** — troubleshooting narratives from development; several contain statements that no longer match the code; some previously contained real secrets (since placeholdered) |
 | `test-*.js`, `check-admin-users.js`, `debug-admin-auth.js`, `verify-paypal-capture.js`, `websocket-control.sh` (root) | **Dev scripts** — run nothing blindly; `verify-paypal-capture.js` reads PayPal creds from env |
 
@@ -194,8 +202,8 @@ When a history file contradicts `docs/`, **`docs/` wins.**
    (analyticsRoute) aliases the canonical names. Do not fork it again.
 9. **Dependency graphs are clean** (K-10 fixed 2026-10-25): `axios` removed
    from backend + frontend (admin uses it legitimately); 52 dead declarations
-   gone. Keep it that way — run `node scripts/audit-deps-usage.mjs` (all
-   three apps) before adding any dependency.
+   gone. Keep it that way — run `node scripts/audit-deps-usage.mjs` **inside
+   each app** (`backend/`, `frontend/`, `admin/`) before adding a dependency.
 10. **Orders embed snapshots** (`items[]`, `address`) — updating a product
     or address never rewrites history; never "repair" old orders by joining
     to current catalog data.
@@ -245,6 +253,64 @@ When a history file contradicts `docs/`, **`docs/` wins.**
     scans test files too; only short/obviously synthetic values are waived.
     Never add a real credential to a fixture, and do not re-add blanket
     fixture exclusions to silence a finding.
+19. **Inventory restoration is exactly-once via a product-side ledger.** The
+    stock credit and its proof are ONE atomic `findOneAndUpdate` on `products`:
+    `$inc stockQuantity` + `$addToSet restorationCredits: '<orderId>:<index>'`,
+    filtered by `restorationCredits: {$ne: creditId}`. Never replace it with a
+    product `updateOne` followed by an order marker — that reintroduces the
+    crash window (credit applied, proof lost, retry double-credits). The
+    `items[].stockRestored` flag is bookkeeping only. Never prune ledger
+    entries while an obligation is unresolved, and keep the field
+    `select: false` (it must not appear in product API responses).
+20. **Distribution archives are built only by `verify-distribution.mjs`.**
+    Never zip the working directory: ignored files (`.env`) ARE included in a
+    naive archive — that is exactly how the credentials leaked. The script
+    validates the tracked set + contents, refuses `.env`/keys/logs/build dirs,
+    never prints values, and creates the ZIP with `git archive` from a clean
+    HEAD. Locked by `distributionArchive.spec.js`.
+21. **Inventory is crash-safe end to end — keep it that way.** Creation
+    (K-21, fixed 2026-10-26) inserts the order as a
+    `stockReservation.status:'pending'` **draft first**, then debits each line
+    in a product update that also writes the `<orderId>:<index>` marker
+    (`reservationDebits`), then commits atomically (`stockReserved:true`,
+    status `reserved`). Restoration (K-13) credits stock and its proof in one
+    `findOneAndUpdate`. Do **not** reintroduce "decrement, then insert the
+    order": that ordering loses units with no document to reconcile. The
+    credit marker and the debit marker are the SAME id, so a retry, a racing
+    sweep, or the cancel/refund path can never move stock twice. Never delete
+    an uncommitted draft whose credit failed — mark it `failed` and let the
+    sweep retry. Details: `docs/09` §5.2.
+22. **Secret history includes DANGLING git objects — refs-only scans miss
+    them.** `npm run security:secrets -- --history` walks refs, so a clean
+    history scan is NOT proof a checkout is clean: on 2026-10-26 two dangling
+    blobs in this repo's `.git/objects` held a live JWT secret, admin password,
+    MongoDB Atlas URI and Cloudinary secret. Run `npm run security:dangling`
+    (`scripts/audit-dangling-blobs.mjs`) after any suspected exposure: it walks
+    `git fsck --unreachable --no-reflogs`, compares each found value with the
+    current `.env` **without printing values**, and exits 1 while any
+    unreachable object still holds a live secret. Purging (`git reflog expire
+    --expire=now --all && git gc --prune=now`) is irreversible and owner-run; it
+    is not a history rewrite (no refs change, no force-push).
+23. **Template files are TRACKED — they are not a safe place for real values.**
+    `*.env.example` / `env.example` ship in every commit and archive. On
+    2026-10-26 a freshly-issued PayPal secret was pasted into
+    `frontend/.env.example` + `frontend/env.example` and the (then
+    backend-scoped) gate stayed green. Real credentials belong ONLY in
+    git-ignored `.env` files; the whole-repo scanner now fails the gate on any
+    tracked file that carries one.
+24. **`git ls-files`, `git log` and `git archive` are cwd-scoped.** Run from a
+    subdirectory they silently cover only that subtree — a monorepo gate must
+    anchor at `git rev-parse --show-toplevel`. Both security scripts do (locked
+    by `secretScanner.spec.js` + `distributionArchive.spec.js`); any new tool
+    that lists, diffs or archives the repo must do the same.
+25. **Rotating `ADMIN_PASSWORD` alone does NOT revoke admin tokens.**
+    `authAdmin` verifies the JWT with `JWT_SECRET` and trusts the
+    `type/role` payload; it never re-compares the password (the payload does not
+    carry it). An admin token minted before a password-only rotation stays
+    valid until its 1-day `exp`. Rotate `JWT_SECRET` in the same window (which
+    is what actually invalidates sessions) or accept that exposure. Verified
+    2026-10-26: a token signed with the pre-rotation secret is rejected with
+    401, and the same check is automated by `npm run verify:old-credentials`.
 
 ## 8. Rules of engagement for changes
 

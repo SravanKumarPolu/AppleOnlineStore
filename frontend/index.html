@@ -2,24 +2,27 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/svg+xml" href="/favicon-32x32.svg" />
     <!-- Viewport & Theme -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#3b82f6" />
-    
+
     <!-- App Capabilities -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="SKR Store" />
+    <meta name="apple-mobile-web-app-title" content="NovaCart" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="msapplication-TileColor" content="#3b82f6" />
     <meta name="msapplication-tap-highlight" content="no" />
-    
+
     <!-- Manifest -->
     <link rel="manifest" href="/manifest.json" />
-    
+
     <!-- Icons -->
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!-- apple-touch-icon must be a real PNG (iOS ignores SVG here); 192px is
+         the smallest existing square icon and iOS scales it. -->
+    <link rel="apple-touch-icon" href="/pwa-192x192.png" />
     <link rel="icon" type="image/png" sizes="192x192" href="/pwa-192x192.png" />
     <link rel="icon" type="image/png" sizes="512x512" href="/pwa-512x512.png" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
@@ -31,25 +34,35 @@
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
 
     <!-- SEO Meta Tags -->
-    <meta name="description" content="A modern e-commerce platform for seamless shopping experience with PWA support" />
-    <meta name="keywords" content="e-commerce, shopping, online store, PWA, mobile app" />
-    <meta name="author" content="SKR E-Commerce" />
+    <meta name="description" content="Shop iPhone, iPad, Mac, Apple Watch, AirPods and accessories at NovaCart. Installable PWA with realtime order tracking and secure PayPal checkout." />
+    <meta name="keywords" content="NovaCart, electronics store, iPhone, iPad, Mac, Apple Watch, AirPods, accessories, online shopping, PWA" />
+    <meta name="author" content="NovaCart" />
 
+    <!--
+      OWNER ACTION (docs/10 §16.9 item 10): the tags below need ABSOLUTE URLs
+      and are intentionally omitted until the production domain is final —
+      the previous values pointed at the retired skr-e-commerce.netlify.app
+      host and a stale asset. Once the domain is known, add:
+        <link rel="canonical" href="https://<domain>/" />
+        <meta property="og:url" content="https://<domain>/" />
+        <meta property="og:image" content="https://<domain>/pwa-512x512.png" />
+        <meta name="twitter:image" content="https://<domain>/pwa-512x512.png" />
+        <meta name="twitter:card" content="summary_large_image" />
+      plus public/sitemap.xml with absolute URLs and a Sitemap line in
+      robots.txt.
+    -->
     <!-- Open Graph Meta Tags -->
-    <meta property="og:url" content="https://skr-e-commerce.netlify.app/" />
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="SKR E-Commerce - Modern Shopping Experience" />
-    <meta property="og:description" content="A modern e-commerce platform for seamless shopping experience with PWA support" />
-    <meta property="og:image" content="https://skr-e-commerce.netlify.app/assets/contact-BQM6GqMZ.png" />
-    <meta property="og:site_name" content="SKR E-Commerce" />
+    <meta property="og:title" content="NovaCart — Consumer Electronics Store" />
+    <meta property="og:description" content="Shop iPhone, iPad, Mac, Apple Watch, AirPods and accessories at NovaCart. Installable PWA with realtime order tracking and secure PayPal checkout." />
+    <meta property="og:site_name" content="NovaCart" />
 
     <!-- Twitter Meta Tags -->
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="SKR E-Commerce - Modern Shopping Experience" />
-    <meta name="twitter:description" content="A modern e-commerce platform for seamless shopping experience with PWA support" />
-    <meta name="twitter:image" content="https://skr-e-commerce.netlify.app/assets/contact-BQM6GqMZ.png" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="NovaCart — Consumer Electronics Store" />
+    <meta name="twitter:description" content="Shop iPhone, iPad, Mac, Apple Watch, AirPods and accessories at NovaCart. Installable PWA with realtime order tracking and secure PayPal checkout." />
 
-    <title>SKR E-Commerce - Modern Shopping Experience</title>
+    <title>NovaCart — Consumer Electronics Store</title>
   </head>
   <body>
     <div id="root"></div>

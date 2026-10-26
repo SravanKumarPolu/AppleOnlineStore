@@ -61,3 +61,29 @@ describe('secret scanner — fixture exclusions cannot hide real credentials', (
     expect(findings.map((finding) => finding.kind)).toContain('assignment:MONGODB_URI');
   });
 });
+
+describe('secret scanner — expiry-aware jwt + env-reference rejection', () => {
+  const b64u = (obj) => Buffer.from(JSON.stringify(obj)).toString('base64url');
+  const header = b64u({ alg: 'HS256', typ: 'JWT' });
+  const makeJwt = (claims) => [header, b64u(claims), 'c2lnbmF0dXJlLWZvci10ZXN0cw'].join('.');
+
+  it('waives a PROVABLY EXPIRED jwt — it can never authenticate', () => {
+    const expired = makeJwt({ id: '507f1f77bcf86cd799439011', exp: Math.floor(Date.now() / 1000) - 3600 });
+    expect(analyzeText(`const t = '${expired}';`, SOURCE)).toEqual([]);
+  });
+
+  it('still flags a jwt whose exp is in the future', () => {
+    const live = makeJwt({ id: '507f1f77bcf86cd799439011', exp: Math.floor(Date.now() / 1000) + 3600 });
+    expect(analyzeText(`const t = '${live}';`, SOURCE).map((f) => f.kind)).toContain('jwt');
+  });
+
+  it('fails closed on an undecodable jwt-looking string', () => {
+    const undecodable = ['eyJ' + 'A'.repeat(20), 'eyJ' + 'B'.repeat(20), 'c'.repeat(20)].join('.');
+    expect(analyzeText(`const t = '${undecodable}';`, SOURCE).map((f) => f.kind)).toContain('jwt');
+  });
+
+  it('does not flag a process.env reference as a secret value', () => {
+    const text = 'const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;';
+    expect(analyzeText(text, SOURCE)).toEqual([]);
+  });
+});

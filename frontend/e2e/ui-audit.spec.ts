@@ -6,6 +6,7 @@
 // refresh, search, the 404 page, and baseline accessibility structure
 // (landmarks, image alt text, heading hierarchy).
 import { test, expect, type Page } from '@playwright/test';
+import { openSignUpForm } from './helpers';
 
 const PRODUCT_NAME = 'iPhone 15 Pro E2E';
 
@@ -188,8 +189,7 @@ test('session persists across a full browser refresh', async ({ page }) => {
     password: 'Audit!Pass123',
   };
   await page.goto('/login');
-  await page.getByRole('button', { name: 'Switch to Sign Up mode' }).click();
-  const form = page.getByRole('form', { name: 'Sign Up form' });
+  const form = await openSignUpForm(page);
   await form.getByRole('textbox', { name: 'Full Name' }).fill(account.name);
   await form.getByRole('textbox', { name: 'Email Address' }).fill(account.email);
   await form.getByRole('textbox', { name: 'Password' }).fill(account.password);

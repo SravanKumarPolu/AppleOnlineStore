@@ -61,7 +61,11 @@ erDiagram
         number shipping "fixed 10"
         number total "server-computed only"
         string currency "USD"
-        boolean stockReserved "cancel restores stock exactly once"
+        boolean stockReserved "atomic release claim; cancel/refund/expiry restores"
+        date reservationExpiresAt "PayPal hold TTL; swept when unpaid"
+        object inventoryRestoration "status none|pending|completed|reconciliation_required + attempts/lastError"
+        array items[].stockRestored "bookkeeping only (the product ledger is the proof)"
+        string refundStatus "null|pending|completed|failed — refund truth, not paymentStatus"
         string idempotencyKey "nullable — unique per user when string"
         string paypalOrderId "sparse"
         string paypalCaptureId "sparse"
@@ -80,7 +84,8 @@ erDiagram
         boolean bestseller
         number date
         boolean inStock
-        number stockQuantity "atomic reservation target"
+        number stockQuantity "atomic reservation target; restored exactly once"
+        array restorationCredits "select:false — one <orderId>:<index> per restored line (exactly-once proof)"
         object ratings
         boolean featured
     }
@@ -125,8 +130,8 @@ erDiagram
 ## 3. Data-integrity rules enforced at the schema/controller level
 
 - **Prices and totals** are computed only from `products.price` at order-creation time; client-supplied prices are discarded (and rejected when malformed).
-- **Stock reservation** uses an atomic conditional update (`stockQuantity >= qty`), so concurrent orders cannot oversell; failures roll back partial reservations.
-- **Cancellation restores stock exactly once** via the `stockReserved` claim in the same atomic update.
+- **Stock reservation** uses an atomic conditional update (`stockQuantity >= qty`), so concurrent orders cannot oversell. Since 2026-10-26 (K-21) the order draft is inserted **before** any decrement and each line's decrement also writes a `<orderId>:<index>` debit marker in the same product update, so a crash leaves a recoverable draft instead of lost units; abandoned drafts are credited exactly once by the sweep (`docs/10` §18.4).
+- **Restoration is exactly-once** via the product-side ledger: `$inc stockQuantity` + `$addToSet restorationCredits: '<orderId>:<index>'` in ONE `findOneAndUpdate` filtered by `restorationCredits: {$ne: creditId}`. A crash or concurrent retry can neither lose nor duplicate a credit; `items[].stockRestored` is bookkeeping only.
 - **Webhook-applied updates** verify amount + currency against `order.total`/`order.currency` before writing, never clobber `refunded` orders, and are idempotent (`paymentStatus: 'completed'` set operationally).
 - **Session invalidation:** `users.tokenVersion` vs the JWT `tv` claim — bumping on password reset invalidates all existing tokens for that user.
 - **Soft deletes:** orders are filtered by `isActive: true` in shopper/admin listings; products and categories are hard-deleted (product removal also destroys Cloudinary assets best-effort).

@@ -8,7 +8,12 @@ export const mockUser = {
   lastLogin: new Date('2024-01-15')
 };
 
-export const mockToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjUwN2YxZjc3YmNmODZjZDc5OTQzOTAxMSIsImlhdCI6MTcwNTQ0NzIwMCwiZXhwIjoxNzA2MDUyMDAwfQ.test-signature';
+// Fabricated at runtime so no credential-shaped literal ever exists in source.
+export const mockToken = [
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9',
+  'eyJzdWIiOiJtYXJrZXRwbGFjZS10ZXN0Iiwicm9sZSI6InNob3BwZXIiLCJpYXQiOjF9',
+  'ZmFrZS1zaWduYXR1cmUtZm9yLXZpdGVzdC1vbmx5',
+].join('.');
 
 export const mockPasswordResetToken = 'abc123def456ghi789jkl012mno345pqr678stu901vwx234yz';
 

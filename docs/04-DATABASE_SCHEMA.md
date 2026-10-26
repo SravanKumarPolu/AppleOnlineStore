@@ -76,7 +76,9 @@ secrets, `__v`.
 | `bestseller` | Boolean | default `false`; indexed |
 | `date` | Number | default `Date.now()` — used for "latest" sorting |
 | `inStock` | Boolean | default `true`; auto-set `false` on save when `stockQuantity ≤ 0` |
-| `stockQuantity` | Number | default `0`; ≥ 0; **informational only** — orders do not decrement it (K-5) |
+| `stockQuantity` | Number | default `0`; ≥ 0; **live inventory** — atomically decremented on reservation (`stockQuantity >= qty` + `$inc`) and credited back on cancel/refund/expiry (K-5, K-13) |
+| `restorationCredits` | `[String]` | `select: false` — exactly-once restoration ledger. Each entry is `<orderId>:<itemIndex>`, added by the SAME atomic `findOneAndUpdate` that increments `stockQuantity`; the `$ne` filter makes retries/concurrent sweeps no-ops. Never exposed by the product API. See `docs/09` §5.2 |
+| `reservationDebits` | `[String]` | `select: false` — creation-time debit ledger (K-21). Each entry is `<orderId>:<itemIndex>`, added by the SAME atomic `findOneAndUpdate` that decrements `stockQuantity` for an order draft. It proves which lines an uncommitted draft actually took, so the abandonment sweep credits exactly those and never invents stock. Removed by the credit that returns the line; never exposed by the product API |
 | `ratings.average` / `ratings.count` | Number / Number | 0–5 / ≥ 0; **no submission flow exists** — display-only |
 | `featured` | Boolean | 🪦 declared, no consumer |
 | `createdAt` / `updatedAt` | Date | timestamps |
@@ -96,7 +98,8 @@ not this index).
 | `address` | Embedded subdocument (`_id:false`) | Same address fields as the user address book (no `default`/`addedAt` here) — a snapshot of delivery data |
 | `paymentMethod` | String enum `COD` \| `PayPal` \| `Card` | Required; `'Card'` (added 2026-10-24, K-1 fix) = gateway-less recorded card intent — order stays `paymentStatus:'pending'` until the store completes it out-of-band |
 | `paymentStatus` | String enum `pending` \| `completed` \| `failed` \| `refunded` | default `pending`; `completed` set by verified capture/webhook; `refunded` set only when a refund is **completed** (gateway `COMPLETED` or a recorded manual refund) |
-| `stockReserved` | Boolean | default `false`; `true` while the order holds a stock reservation. Cleared atomically as the **release claim** shared by cancel, refund and the expiry sweep — exactly one path can claim it |
+| `stockReserved` | Boolean | default `false`; `true` **only after** every line of the reservation has been debited (`stockReservation.status:'reserved'`). Cleared atomically as the **release claim** shared by cancel, refund and the expiry sweep — exactly one path can claim it |
+| `stockReservation` | Subdocument | Creation-time reservation state (K-21): `status` (`none` \| `pending` \| `reserved` \| `releasing` \| `failed`), `startedAt`, `completedAt`, `attempts`, `lastError`. The order is inserted as a `pending` draft **before** any decrement; an uncommitted draft older than 2 minutes is settled by the sweep (`releaseAbandonedReservations`), which credits its marked lines and then deletes the draft — so no terminal “released” document ever exists |
 | `reservationExpiresAt` | Date / null | PayPal holds expire 30 min after creation (`PAYPAL_RESERVATION_TTL_MS`); `null` for COD/Card (no gateway hold) |
 | `inventoryRestoration` | Subdocument | Durable release/restoration state: `status` (`none` \| `pending` \| `completed` \| `reconciliation_required`), `attempts`, `lastError`, `startedAt`, `completedAt`. A failed product credit stays `reconciliation_required` and is retried by every sweep — the obligation is never dropped |
 | `orderStatus` | String enum `ORDER_STATUSES` | default `'Order Placed'`; the exported constant `ORDER_STATUSES` in `orderModel.js` is the single source of truth (6 values) |
@@ -113,8 +116,9 @@ not this index).
 Indexes: `{userId:1, createdAt:-1}`, `{paymentStatus:1}`, `{orderStatus:1}`,
 `{createdAt:-1}`, `{userId:1, idempotencyKey:1}` (unique, partial on string keys),
 `{paymentStatus:1, stockReserved:1, reservationExpiresAt:1}` (expiry sweep),
-`{'inventoryRestoration.status':1}` (restoration retry sweep). (Sparse PayPal
-fields are indexed by their field declarations.)
+`{'inventoryRestoration.status':1}` (restoration retry sweep),
+`{'stockReservation.status':1, 'stockReservation.startedAt':1}` (abandoned-draft
+sweep). (Sparse PayPal fields are indexed by their field declarations.)
 
 Statics: `findByUser` (paginated), `findAllOrders` (paginated + user
 population), `findByPayPalOrderId`, `findByPayPalCaptureId`. Instance:

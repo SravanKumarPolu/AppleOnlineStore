@@ -151,3 +151,31 @@ at the workspace level (`scripts/gate_smoke.sh`, secret-free output).
 - Sandbox-validation gate: **still open (❓)** — closes when §2's ⛔ items
   run on a staging host; all locally-provable prerequisites are green.
 - Everything else (features, tests, builds) verified intact after execution.
+
+---
+
+## Dated addendum (2026-10-26, third pass — owner-requested credential re-audit)
+
+§1.4's "this working copy verified clean" was produced by a **backend-scoped**
+scan: `git ls-files` / `git log` are cwd-scoped, and the npm scripts run from
+`backend/`, so only `backend/**` (106 of 482 tracked files) was ever covered.
+Re-verified 2026-10-26 after anchoring both security gates at the repo toplevel
+(control defect recorded as S8 in `docs/08`):
+
+- Working tree (482 tracked files): **clean**.
+- Full history (all refs, whole repo): **clean of live credentials**. The only
+  pattern findings were this checkout's agent checkpoint refs
+  (`refs/agents/a3b39132…/checkpoints/turn/0–3`), whose snapshots hold solely
+  synthetic values — the startup verifier's `verify-*` boot string and an
+  expired fabricated mock JWT in `frontend/src/utils/testUtils.ts`
+  (payload `id` = the textbook example ObjectId, `exp` = 2024-01, decoded to
+  confirm). Both are now waived by rule (fixture/synthetic + expiry-aware),
+  and the mock token is runtime-fabricated on main so future checkpoints stay
+  clean.
+- 31 dangling blobs were also audited (invisible to refs-based scans): two held
+  credential assignments; at audit time one still matched the LIVE MongoDB URI
+  and Cloudinary secret — owner rotations pending (`docs/devops/07`).
+
+No history was rewritten and no refs were deleted; the checkpoint refs and the
+dangling blobs remain in place pending the owner's purge decision
+(`docs/devops/07`).

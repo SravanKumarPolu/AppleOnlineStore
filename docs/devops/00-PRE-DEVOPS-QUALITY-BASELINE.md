@@ -509,3 +509,42 @@ load artifact is committed.
     (`CartTotal`) → PWA lifecycle (`PWAInstallProvider`, `OfflinePage`) →
     Socket.IO client flow (needs an explicit `socket.io-client` devDependency)
     → PayPal sandbox E2E branch → cart "unavailable product" UX.
+
+---
+
+## 13. Addendum — second stabilization pass (2026-10-26, later)
+
+The baseline above is preserved as executed. This addendum records the later
+pass; where numbers differ, this section is current.
+
+### 13.1 New gates and results
+
+| Gate | Command | Result |
+|---|---|---|
+| Backend regression | `cd backend && npm test` | **42 suites / 416 tests PASS** |
+| Frontend unit | `cd frontend && npm run test -- --run` | 24 files / 125 tests PASS |
+| Admin unit | `cd admin && npm run test -- --run` | 13 files / 70 tests PASS |
+| Browser matrix | `cd frontend && npm run test:e2e` | 51/51 PASS (17 × Chromium/Firefox/WebKit) |
+| Secret scan | `npm run security:secrets` | Clean (tree + full history) |
+| Distribution policy | `npm run security:distribution` | Clean tracked HEAD set; refuses `.env`/keys/logs/build dirs |
+| PayPal sandbox | `npm run paypal:sandbox -- --check` | Exit 2 — BLOCKED (`PAYPAL_WEBHOOK_ID` missing) |
+
+### 13.2 Corrections to earlier sections
+
+1. **Env count:** the verified backend template contains **35** variables
+   (adds `PAYPAL_PAYEE_EMAIL`, `PAYPAL_RESERVATION_TTL_MS`,
+   `RESERVATION_SWEEP_INTERVAL_MS`, `RATE_LIMIT_MAX`, `AUTH_RATE_LIMIT_MAX`).
+2. **Inventory restoration is now exactly-once**, not merely retryable. The
+   stock credit and its durable proof are one atomic single-document update on
+   `products` (`$inc stockQuantity` + `$addToSet restorationCredits`), so the
+   previously documented one-write crash window no longer exists. See
+   `docs/09` §5.2 and `docs/10` §16.
+3. **Archive exposure:** the earlier baseline could only verify Git-tracked
+   content. A distributed ZIP had included the ignored `backend/.env`;
+   `verify-distribution.mjs` now enforces archive content policy, but the old
+   archive's credentials remain ROTATION REQUIRED (`docs/devops/07`).
+4. **Load baseline superseded:** the original artifact counted only 5xx and
+   measured limiter responses; use
+   `docs/testing/load-results-2026-10-26-post-fix.json` and read its caveats.
+5. **PayPal remains ❓ UNVERIFIED end-to-end** — a sandbox order creation is not
+   a signed webhook lifecycle.

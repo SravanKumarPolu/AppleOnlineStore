@@ -210,7 +210,7 @@ const Footer = () => {
             viewport={{ once: true }}
           >
             <p className="text-gray-600 text-sm font-medium">
-              © {currentYear} Apple Store. All rights reserved. | Designed with ❤️ for premium experience
+              © {currentYear} NovaCart. All rights reserved. | Designed with ❤️ for premium experience
             </p>
           </motion.div>
         </div>

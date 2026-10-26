@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
+    "dev": "node --watch server.js",
     "server": "node --watch server.js",
     "test": "node --experimental-vm-modules node_modules/.bin/jest --runInBand",
     "test:parallel": "node --experimental-vm-modules node_modules/.bin/jest",
@@ -25,7 +26,11 @@
     "test:security": "node --experimental-vm-modules node_modules/.bin/jest --runInBand",
     "paypal:sandbox": "node scripts/paypal-sandbox-check.mjs",
     "security:secrets": "node scripts/scan-secrets.mjs --history",
-    "load:test": "node scripts/load-test.mjs"
+    "security:distribution": "node scripts/verify-distribution.mjs --check",
+    "load:test": "node scripts/load-test.mjs",
+    "security:dangling": "node scripts/audit-dangling-blobs.mjs",
+    "security:rotation": "node scripts/verify-credential-rotation.mjs",
+    "verify:old-credentials": "node scripts/verify-old-credentials.mjs"
   },
   "author": "",
   "license": "ISC",

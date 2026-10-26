@@ -23,8 +23,8 @@ A full-stack e-commerce system: **storefront PWA + admin dashboard + REST/realti
   account lockout, signature-verified PayPal webhooks with a recoverable
   idempotency state machine, health endpoints, graceful bounded shutdown,
   boot-time configuration guardrails, log redaction, shared CORS allowlist,
-  credential-safe MongoDB connection resolver. **41 test suites /
-  404 tests passing** (plus 24 frontend files / 125 tests, 13 admin files /
+  credential-safe MongoDB connection resolver. **43 test suites /
+  441 tests passing** (plus 24 frontend files / 125 tests, 13 admin files /
   70 tests, and 51 real-browser E2E checks across Chromium/Firefox/WebKit).
 
 ### Known limitations (documented, not hidden)
@@ -38,10 +38,12 @@ A full-stack e-commerce system: **storefront PWA + admin dashboard + REST/realti
   creation work, but a signed webhook end-to-end is blocked on
   `PAYPAL_WEBHOOK_ID` + a public HTTPS host + a sandbox buyer session — see
   `docs/devops/08`.
-- **Inventory restoration is durable but not distributed-transactional.** A
-  failed product credit is retried by the sweep; the tiny crash window
-  between a successful credit and its bookkeeping marker is documented in
-  `docs/09` §5.2.
+- **Inventory is exactly-once on both ends (2026-10-26, K-13 + K-21).**
+  Restoration credits stock and its durable proof in one atomic single-document
+  update (`restorationCredits`), and creation inserts the order **draft first**,
+  then debits each line with a `<orderId>:<index>` marker in the same product
+  update, then commits — so a crash leaves a recoverable draft instead of lost
+  units, and the sweep settles it exactly once (`docs/09` §5.2, `docs/10` §18.4).
 
 - **COD and Card checkout create real orders** (fixed 2026-10-24, K-1):
   COD/Card submit through `POST /api/orders` as `paymentStatus:'pending'`
@@ -55,10 +57,11 @@ A full-stack e-commerce system: **storefront PWA + admin dashboard + REST/realti
 - The sales-analytics `categoryBreakdown` aggregates real product categories
   (K-12 fixed 2026-10-24 — the `$lookup` now normalizes string product ids to
   ObjectId before joining, with garbage ids skipped safely).
-- Orders do not decrement stock (K-5); the admin panel has no mobile
-  navigation (K-6) — its test coverage is complete for the shipped surface
-  (auth chrome, dashboard, Orders/Add/List, the four analytics pages and
-  the Sidebar; 12 files / 65 tests since 2026-10-25).
+- Orders decrement stock atomically and restore it exactly once on
+  cancel/refund/expiry (K-5 fixed 2026-10-25, K-13 fixed 2026-10-26); the admin
+  panel has no mobile navigation (K-6) — its test coverage is complete for the
+  shipped surface (auth chrome, dashboard, Orders/Add/List, the four analytics
+  pages and the Sidebar; 13 files / 70 tests).
 - Live PayPal end-to-end is **UNVERIFIED** until the sandbox checklist runs
   (`docs/devops/08-…`); credential rotation is partially done — `JWT_SECRET`
   + admin credentials rotated 2026-10-24, provider credentials pending owner
@@ -94,11 +97,13 @@ that is by design; the startup report names the variables (never values).
 ## Testing
 
 ```bash
-cd backend  && npm test                # canonical regression gate (35 suites / 355 tests)
+cd backend  && npm test                # canonical regression gate (43 suites / 441 tests)
 cd backend  && npm run verify:startup  # boots real server vs in-memory Mongo; readiness + graceful shutdown
-cd frontend && npm run test -- --run    # 57 vitest tests (12 files)
+cd backend  && npm run security:secrets -- --history   # tree + history, value-free
+cd backend  && npm run security:dangling              # unreachable git objects holding a live secret
+cd frontend && npm run test -- --run    # 125 vitest tests (24 files)
 cd admin    && npm run test -- --run    # 70 vitest tests (13 files)
-cd frontend && npm run test:e2e         # 13 real-browser E2E tests (checkout + UI audit)
+cd frontend && npm run test:e2e         # 51 real-browser checks (17 × Chromium/Firefox/WebKit)
 ```
 
 ⚠️ `cd backend && npm run test:smoke` is a different thing (needs a live

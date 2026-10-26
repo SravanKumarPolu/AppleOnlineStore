@@ -10,9 +10,9 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
       manifest: {
-        name: 'SKR E-Commerce',
-        short_name: 'SKR Store',
-        description: 'A modern e-commerce platform for seamless shopping experience',
+        name: 'NovaCart — Consumer Electronics Store',
+        short_name: 'NovaCart',
+        description: 'Shop iPhone, iPad, Mac, Apple Watch, AirPods and accessories. Installable PWA with realtime order tracking and secure PayPal checkout.',
         theme_color: '#3b82f6',
         background_color: '#ffffff',
         display: 'standalone',

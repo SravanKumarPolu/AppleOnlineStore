@@ -10,7 +10,13 @@ import { redactError } from '../utils/redact.js';
 import { getActiveWebhookVerifier } from '../services/paypalWebhookService.js';
 import { createPayPalEnvironment } from '../config/paypalEnv.js';
 import { UserActivity, ProductPerformance } from '../models/analyticsModel.js';
-import { reservationExpiryFrom, releaseOrderReservation } from '../services/reservationService.js';
+import {
+  reservationExpiryFrom,
+  releaseOrderReservation,
+  reservationDebitId,
+  creditReservedLine,
+  commitStockReservation,
+} from '../services/reservationService.js';
 
 dotenv.config();
 
@@ -112,38 +118,95 @@ async function priceOrderItems(items) {
   return { ok: true, items: priced };
 }
 
-// Atomically reserves stock for each item. Returns the list of reservations
-// made so a failure can roll them back. The findOneAndUpdate filter makes
-// each decrement race-free: if two buyers race for the last unit, exactly one
-// update matches `stockQuantity >= qty`.
-async function reserveStock(pricedItems) {
-  const reserved = [];
-  for (const item of pricedItems) {
+// K-21: reserve the stock for an ALREADY PERSISTED draft order.
+//
+// Each decrement writes a durable debit marker (`<orderId>:<index>`) in the
+// SAME product update as the `$inc`, so the stock change and the proof that it
+// happened commit together or not at all. A crash after this point leaves a
+// draft the sweep can reconcile — the pre-K-21 ordering decremented first and
+// inserted the order later, so a death in that gap destroyed the units with no
+// document to trace them. The `stockQuantity >= qty` filter keeps the decrement
+// race-free (two buyers cannot oversell the last unit).
+async function reserveOrderStock(order) {
+  const applied = [];
+  const items = Array.isArray(order.items) ? order.items : [];
+
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    const debitId = reservationDebitId(order._id, index);
     const updated = await productModel.findOneAndUpdate(
-      { _id: item.productId, inStock: true, stockQuantity: { $gte: item.quantity } },
-      { $inc: { stockQuantity: -item.quantity } },
+      {
+        _id: item.productId,
+        inStock: true,
+        stockQuantity: { $gte: item.quantity },
+        reservationDebits: { $ne: debitId },
+      },
+      {
+        $inc: { stockQuantity: -item.quantity },
+        $addToSet: { reservationDebits: debitId },
+      },
       { new: true }
     );
     if (!updated) {
-      return { ok: false, reserved, message: `Insufficient stock for "${item.name}"` };
+      return { ok: false, applied, message: `Insufficient stock for "${item.name}"` };
     }
-    reserved.push({ productId: item.productId, quantity: item.quantity });
+    applied.push(index);
   }
-  return { ok: true, reserved };
+
+  return { ok: true, applied };
 }
 
-// Rolls back reservations (best-effort) after a mid-flow failure.
-async function releaseStock(reserved) {
-  for (const r of reserved) {
+// Credit back the lines THIS request debited. Marker-guarded, so a line is
+// returned at most once even if this runs twice or a sweep runs concurrently.
+async function rollbackOrderStock(order, indices) {
+  const failures = [];
+  const items = Array.isArray(order.items) ? order.items : [];
+
+  for (const index of indices) {
+    const item = items[index];
     try {
-      await productModel.updateOne(
-        { _id: r.productId },
-        { $inc: { stockQuantity: r.quantity }, $set: { inStock: true } }
+      await creditReservedLine(
+        item.productId,
+        item.quantity,
+        reservationDebitId(order._id, index)
       );
-    } catch (e) {
-      console.error('Stock release failure:', redactError(e));
+    } catch (error) {
+      console.error('Stock release failure:', redactError(error));
+      failures.push(index);
     }
   }
+
+  return failures;
+}
+
+// A draft whose reservation failed must not survive as an order (the shopper
+// gets the same "no order" answer as before). If the rollback itself failed,
+// the draft is kept as `failed` so the sweep retries and alerts — never deleted
+// while units may still be owed.
+async function abandonDraftOrder(order, indices) {
+  const failures = await rollbackOrderStock(order, indices);
+
+  if (failures.length === 0) {
+    await orderModel.deleteOne({ _id: order._id, stockReserved: false });
+    return { clean: true };
+  }
+
+  await orderModel.updateOne(
+    { _id: order._id },
+    {
+      $set: {
+        'stockReservation.status': 'failed',
+        'stockReservation.lastError': `rollback incomplete for line(s) ${failures.join(',')}`,
+      },
+    }
+  );
+  console.error(
+    `🚨 INVENTORY RESERVATION ALERT [draft_rollback_incomplete] ${JSON.stringify({
+      orderId: String(order._id),
+      failedLines: failures,
+    })}`
+  );
+  return { clean: false };
 }
 
 const placeOrder = async (req, res) => {
@@ -228,17 +291,11 @@ const placeOrder = async (req, res) => {
     const shipping = 10; // Fixed shipping cost
     const total = subtotal + shipping;
 
-    // I-1/I-2: atomically reserve stock; never allow oversell.
-    const reservation = await reserveStock(pricedItems);
-    if (!reservation.ok) {
-      await releaseStock(reservation.reserved); // roll back partial reservations
-      return res.status(400).json({
-        success: false,
-        message: reservation.message
-      });
-    }
-
-    // Create order object
+    // K-21: insert the order DRAFT first, then debit each line. The order id
+    // has to exist before the debits so every product update can carry a
+    // `<orderId>:<index>` proof of what it took; a process death between the
+    // two is then reconciled by the sweep instead of silently destroying
+    // sellable stock (the pre-K-21 ordering had no document to trace).
     const orderData = {
       userId,
       items: pricedItems,
@@ -250,28 +307,28 @@ const placeOrder = async (req, res) => {
       currency: 'USD',
       paymentStatus: 'pending',
       orderStatus: 'Order Placed',
-      stockReserved: true // reservation happened above; cancel restores it
+      stockReserved: false,
+      stockReservation: { status: 'pending', startedAt: new Date() }
     };
     if (idempotencyKey) {
       orderData.idempotencyKey = idempotencyKey;
     }
 
-    // Save order to database
+    // Save the draft to the database
     const order = new orderModel(orderData);
     try {
       await order.save();
     } catch (saveError) {
       // AF-1 race window: two concurrent requests with the same key can both
       // pass the pre-check above; the unique partial index decides the winner
-      // at save time. The loser releases its reservation and replays the
-      // winner's order instead of surfacing a 500.
+      // at save time. The loser replays the winner's order. No stock has been
+      // touched yet, so there is nothing to release.
       const isDuplicateKey =
         saveError &&
         (saveError.code === 11000 ||
           /E11000 duplicate key/i.test(String(saveError.message))) &&
         idempotencyKey;
       if (isDuplicateKey) {
-        await releaseStock(reservation.reserved);
         const winner = await orderModel
           .findOne({ userId, idempotencyKey })
           .lean();
@@ -284,9 +341,34 @@ const placeOrder = async (req, res) => {
           });
         }
       }
-      await releaseStock(reservation.reserved); // I-4: DB failure must not eat stock
       throw saveError;
     }
+
+    // I-1/I-2: atomically reserve stock for the draft; never allow oversell.
+    const reservation = await reserveOrderStock(order);
+    if (!reservation.ok) {
+      await abandonDraftOrder(order, reservation.applied);
+      return res.status(400).json({
+        success: false,
+        message: reservation.message
+      });
+    }
+
+    const committed = await commitStockReservation(order._id);
+    if (!committed) {
+      // Only reachable when the abandonment sweep reclaimed the draft because
+      // this request stalled past the grace window. The units are already back
+      // in the catalog, so this order must not be reported as placed.
+      await abandonDraftOrder(order, reservation.applied);
+      return res.status(409).json({
+        success: false,
+        code: 'ORDER_RESERVATION_LOST',
+        message: 'Stock reservation expired, please try again'
+      });
+    }
+    // Reflect the committed hold in the response object.
+    order.stockReserved = true;
+    order.stockReservation = committed.stockReservation;
 
     // Track user activity
     try {
@@ -485,19 +567,11 @@ const placeOrderPayPal = async (req, res) => {
     console.log('  - Order ID:', order.result.id);
     console.log('  - Status:', order.result.status);
     
-    // I-1/I-2: reserve stock at PayPal-order creation (the reservation is
-    // the shopper's hold on the inventory; the capture/webhook pipeline never
-    // touches stock, so a single payment can never deduct twice).
-    const reservation = await reserveStock(pricedItems);
-    if (!reservation.ok) {
-      await releaseStock(reservation.reserved);
-      return res.status(400).json({
-        success: false,
-        message: reservation.message
-      });
-    }
-
-    // Save order to database with PayPal order ID
+    // I-1/I-2 + K-21: the hold is the shopper's reservation. Insert the draft
+    // with its `paypalOrderId` first, debit the lines (each with an atomic
+    // debit marker), then commit. A death between debit and commit leaves a
+    // recoverable draft instead of losing units; the capture/webhook pipeline
+    // never touches stock, so one payment can never deduct twice.
     const orderData = {
       userId,
       items: pricedItems,
@@ -510,19 +584,38 @@ const placeOrderPayPal = async (req, res) => {
       paypalOrderId: order.result.id,
       paymentStatus: 'pending',
       orderStatus: 'Order Placed',
-      stockReserved: true,
+      stockReserved: false,
+      stockReservation: { status: 'pending', startedAt: new Date() },
       // Abandoned PayPal windows release their hold after this timestamp
       // (services/reservationService.js).
       reservationExpiresAt: reservationExpiryFrom()
     };
 
     const dbOrder = new orderModel(orderData);
-    try {
-      await dbOrder.save();
-    } catch (saveError) {
-      await releaseStock(reservation.reserved); // DB failure must not eat stock
-      throw saveError;
+    // Nothing is debited yet — the draft insert is the first write, so a save
+    // failure simply propagates to the handler below.
+    await dbOrder.save();
+
+    const reservation = await reserveOrderStock(dbOrder);
+    if (!reservation.ok) {
+      await abandonDraftOrder(dbOrder, reservation.applied);
+      return res.status(400).json({
+        success: false,
+        message: reservation.message
+      });
     }
+
+    const committed = await commitStockReservation(dbOrder._id);
+    if (!committed) {
+      await abandonDraftOrder(dbOrder, reservation.applied);
+      return res.status(409).json({
+        success: false,
+        code: 'ORDER_RESERVATION_LOST',
+        message: 'Stock reservation expired, please try again'
+      });
+    }
+    dbOrder.stockReserved = true;
+    dbOrder.stockReservation = committed.stockReservation;
     
     console.log('📦 Order saved to database:', dbOrder._id);
     

@@ -7,6 +7,7 @@
 // The PayPal branch is intentionally NOT driven here: it needs real sandbox
 // credentials + a public HTTPS host (docs/devops/08 checklist, owner action).
 import { test, expect, type Page } from '@playwright/test';
+import { openSignUpForm } from './helpers';
 
 const PRODUCT_NAME = 'iPhone 15 Pro E2E';
 
@@ -43,11 +44,10 @@ async function registerViaUi(page: Page) {
   await page.goto('/login');
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Sign In', exact: true })).toBeEnabled();
-  await page.getByRole('button', { name: 'Switch to Sign Up mode' }).click();
 
   // Role-based selectors: the login form labels its inputs (the footer also
   // has a placeholder-only email input that would collide by placeholder).
-  const form = page.getByRole('form', { name: 'Sign Up form' });
+  const form = await openSignUpForm(page);
   await expect(form.getByRole('button', { name: 'Create Account' })).toBeEnabled();
   await form.getByRole('textbox', { name: 'Full Name' }).fill(account.name);
   await form.getByRole('textbox', { name: 'Email Address' }).fill(account.email);
@@ -188,9 +188,8 @@ test('Install App is user-initiated and does not block login or signup', async (
   await expect(dialog).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Sign In', exact: true }).click();
-  await page.getByRole('button', { name: 'Switch to Sign Up mode' }).click();
-  const createAccount = page.getByRole('form', { name: 'Sign Up form' })
-    .getByRole('button', { name: 'Create Account' });
+  const signUpForm = await openSignUpForm(page);
+  const createAccount = signUpForm.getByRole('button', { name: 'Create Account' });
   await expect(createAccount).toBeEnabled();
   await createAccount.click();
   await expect(dialog).toHaveCount(0);

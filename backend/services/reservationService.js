@@ -21,9 +21,12 @@
 //     'reconciliation_required' — at least one item failed and is retried on
 //                                 every sweep; loud ops alert until resolved
 //
-// Per item, `items[].stockRestored` is the exactly-once marker: an item is
-// marked only AFTER its product credit succeeds, so a failed credit is retried
-// while an already-credited item is never credited twice.
+// Per item, `items[].stockRestored` is bookkeeping; the EXACTLY-ONCE guarantee
+// lives on the product: `restorationCredits[]` records `<orderId>:<itemIndex>`
+// inside the SAME atomic findOneAndUpdate that increments `stockQuantity`.
+// A crash between "stock incremented" and "marker written" is therefore
+// harmless: the retry finds the credit id already in the ledger and skips the
+// increment — the stock update and its durable proof cannot disagree.
 //
 // Money safety: an expired order keeps its `paypalOrderId`. If the shopper
 // pays *after* expiry, the webhook finds the cancelled order and must NOT
@@ -36,6 +39,11 @@ import { redactError } from '../utils/redact.js';
 
 export const DEFAULT_RESERVATION_TTL_MS = 30 * 60 * 1000; // 30 minutes
 export const DEFAULT_SWEEP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+
+// How long an UNCOMMITTED order draft may exist before the sweep treats it as
+// abandoned (K-21). A normal reservation takes milliseconds; this only guards
+// against a request that died between its first debit and the commit.
+export const ABANDONED_RESERVATION_MS = 2 * 60 * 1000; // 2 minutes
 
 export const RESTORATION_STATUSES = Object.freeze({
   NONE: 'none',
@@ -112,6 +120,241 @@ async function markItemRestored(orderId, index) {
 }
 
 /**
+ * Deterministic per-line restoration identity: the same order line always
+ * maps to the same ledger entry, so any retry path converges on one credit.
+ */
+export function restorationCreditId(orderId, itemIndex) {
+  return `${String(orderId)}:${itemIndex}`;
+}
+
+/**
+ * Debit identity for one order line (K-21). The SAME id is written as the
+ * product's `reservationDebits` marker when the units are taken and as the
+ * `restorationCredits` entry when they are returned, so the two ledgers can
+ * never disagree about a line.
+ */
+export function reservationDebitId(orderId, itemIndex) {
+  return restorationCreditId(orderId, itemIndex);
+}
+
+/**
+ * Commit a finished reservation: the draft becomes the owner of the hold.
+ *
+ * Returns null when the draft is no longer `pending` — in practice only when an
+ * abandonment sweep already released it because the request stalled past
+ * `ABANDONED_RESERVATION_MS`. The caller must then NOT report the order as
+ * placed (the units are already back in the catalog).
+ */
+export async function commitStockReservation(orderId, { now = new Date() } = {}) {
+  return orderModel.findOneAndUpdate(
+    { _id: orderId, stockReserved: false, 'stockReservation.status': 'pending' },
+    {
+      $set: {
+        stockReserved: true,
+        'stockReservation.status': 'reserved',
+        'stockReservation.completedAt': now,
+      },
+    },
+    { new: true }
+  );
+}
+
+/**
+ * Credit back ONE line of an uncommitted draft.
+ *
+ * `reservationDebits: debitId` in the filter is the atomic proof that this line
+ * was actually debited: if the marker is absent, no units were taken (or this
+ * call already returned them), so the line is settled without guessing. The
+ * credit and its `restorationCredits` proof are one update on one document, so a
+ * crash or a concurrent retry can neither lose nor duplicate the credit.
+ */
+export async function creditReservedLine(productId, quantity, debitId) {
+  if (!OBJECT_ID_RE.test(String(productId))) return { settled: true };
+
+  const credited = await productModel.findOneAndUpdate(
+    { _id: productId, reservationDebits: debitId, restorationCredits: { $ne: debitId } },
+    {
+      $inc: { stockQuantity: quantity },
+      $addToSet: { restorationCredits: debitId },
+      $pull: { reservationDebits: debitId },
+      $set: { inStock: true },
+    },
+    { new: true }
+  );
+
+  if (credited) return { applied: true };
+
+  // Marker gone: either it was never written (crash before this line) or a
+  // earlier attempt already returned the units. Both are settled. A deleted
+  // product has nothing to credit either.
+  const productExists = await productModel.exists({ _id: productId });
+  return productExists ? { settled: true } : { missing: true };
+}
+
+/**
+ * Settle ONE abandoned reservation draft: credit exactly the marked lines back
+ * and delete the draft. Idempotent and safe to run concurrently — the status
+ * claim only decides who logs, not whether a line is credited.
+ *
+ * Returns { claimed: false } when the draft is not an abandoned reservation
+ * (committed, already removed, or still inside its grace window).
+ */
+export async function releaseAbandonedReservation(
+  orderId,
+  { now = new Date(), olderThan = ABANDONED_RESERVATION_MS } = {}
+) {
+  const cutoff = new Date(now.getTime() - olderThan);
+  const uncommitted = { $in: ['pending', 'releasing', 'failed'] };
+
+  const claimed = await orderModel.findOneAndUpdate(
+    {
+      _id: orderId,
+      stockReserved: false,
+      'stockReservation.status': uncommitted,
+      // A 'failed' draft is retried immediately; a fresh 'pending' one only
+      // after the grace window (it may belong to a live request).
+      $or: [
+        { 'stockReservation.status': { $in: ['releasing', 'failed'] } },
+        { 'stockReservation.startedAt': { $lte: cutoff } },
+      ],
+    },
+    {
+      $set: { 'stockReservation.status': 'releasing' },
+      $inc: { 'stockReservation.attempts': 1 },
+    },
+    { new: true }
+  );
+
+  if (!claimed) return { claimed: false };
+
+  const items = Array.isArray(claimed.items) ? claimed.items : [];
+  const failures = [];
+
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    if (!item) continue;
+    try {
+      await creditReservedLine(
+        item.productId,
+        item.quantity,
+        reservationDebitId(claimed._id, index)
+      );
+    } catch (error) {
+      failures.push({
+        index,
+        productId: String(item.productId),
+        error: redactError(error).slice(0, 200),
+      });
+    }
+  }
+
+  if (failures.length === 0) {
+    // No confirmation was ever returned to the shopper for this draft, so it
+    // must not survive as an order. Guard on `stockReserved:false` so a
+    // concurrent commit can never be deleted.
+    await orderModel.deleteOne({ _id: claimed._id, stockReserved: false });
+    return { claimed: true, released: true, failures };
+  }
+
+  const lastError = failures
+    .map((failure) => `${failure.productId}: ${failure.error}`)
+    .join('; ');
+  await orderModel.updateOne(
+    { _id: claimed._id },
+    {
+      $set: {
+        'stockReservation.status': 'failed',
+        'stockReservation.lastError': lastError.slice(0, 500),
+      },
+    }
+  );
+  console.error(
+    `🚨 INVENTORY RESERVATION ALERT [unresolved_draft_release] ${JSON.stringify({
+      orderId: String(claimed._id),
+      failedItems: failures.length,
+      productIds: failures.map((failure) => failure.productId),
+    })}`
+  );
+  return { claimed: true, released: false, failures };
+}
+
+/**
+ * Settle every abandoned reservation draft. This is the creation-time twin of
+ * `retryPendingRestorations`: it closes the window where a process died after
+ * debiting stock but before the order was committed (§16.4.1 / K-21).
+ */
+export async function releaseAbandonedReservations({
+  now = new Date(),
+  olderThan = ABANDONED_RESERVATION_MS,
+  limit = 100,
+} = {}) {
+  const cutoff = new Date(now.getTime() - olderThan);
+  const candidates = await orderModel
+    .find({
+      stockReserved: false,
+      'stockReservation.status': { $in: ['pending', 'releasing', 'failed'] },
+      $or: [
+        { 'stockReservation.status': { $in: ['releasing', 'failed'] } },
+        { 'stockReservation.startedAt': { $lte: cutoff } },
+      ],
+    })
+    .select('_id')
+    .limit(limit)
+    .lean();
+
+  const released = [];
+  for (const candidate of candidates) {
+    const result = await releaseAbandonedReservation(candidate._id, { now, olderThan });
+    if (result.claimed) released.push(String(candidate._id));
+  }
+
+  if (released.length > 0) {
+    console.warn(
+      `♻️  Reconciled ${released.length} abandoned stock reservation(s): ${released.join(', ')}`
+    );
+  }
+
+  return released;
+}
+
+/**
+ * Credit one order line back to the catalog — ATOMICALLY with its proof.
+ *
+ * The stock increment and the ledger write are a single updateOne on ONE
+ * product document, which MongoDB executes atomically (no replica set or
+ * multi-document transaction required). The `$ne: creditId` filter means a
+ * retry or a concurrent worker with the same credit id matches nothing and
+ * cannot double-apply.
+ *
+ * Returns { applied: true } when this call credited the stock,
+ *         { alreadyApplied: true } when the ledger proves it was done before,
+ *         { missing: true } when the product no longer exists.
+ */
+export async function creditProductStock(productId, quantity, creditId) {
+  const credited = await productModel.findOneAndUpdate(
+    { _id: productId, restorationCredits: { $ne: creditId } },
+    {
+      $inc: { stockQuantity: quantity },
+      $addToSet: { restorationCredits: creditId },
+      // Same id: retire the creation-time debit marker with the credit, so the
+      // product never accumulates markers for lines that are already returned.
+      $pull: { reservationDebits: creditId },
+      $set: { inStock: true },
+    },
+    { new: true }
+  );
+
+  if (credited) return { applied: true };
+
+  // No match: either the credit was already applied, or the product is gone.
+  const alreadyApplied = await productModel.exists({
+    _id: productId,
+    restorationCredits: creditId,
+  });
+  return alreadyApplied ? { alreadyApplied: true } : { missing: true };
+}
+
+/**
  * Credit every not-yet-restored item back to the catalog, then persist the
  * aggregate state. Idempotent per item, retryable per failure.
  *
@@ -133,17 +376,19 @@ export async function restoreOrderInventory(order) {
     }
 
     try {
-      const result = await productModel.updateOne(
-        { _id: item.productId },
-        [{ $set: { stockQuantity: { $add: ['$stockQuantity', item.quantity] }, inStock: true } }]
+      const result = await creditProductStock(
+        item.productId,
+        item.quantity,
+        restorationCreditId(order._id, index)
       );
-      // matchedCount === 0 → the product was deleted; nothing to return.
-      await markItemRestored(order._id, index);
-      if (result.matchedCount === 0) {
+      if (result.missing) {
         console.warn(
           `Reservation release: product ${item.productId} no longer exists (order ${order._id})`
         );
       }
+      // Bookkeeping AFTER the (idempotent) credit. A crash here is safe: the
+      // ledger already proves the credit, so the retry will not increment again.
+      await markItemRestored(order._id, index);
     } catch (error) {
       failures.push({
         index,
@@ -276,11 +521,12 @@ export async function retryPendingRestorations({ limit = 100 } = {}) {
   return { retried: pending.length, completed, unresolved };
 }
 
-/** One full inventory sweep: expired holds first, then owed restorations. */
+/** One full inventory sweep: expired holds, owed restorations, abandoned drafts. */
 export async function runInventorySweep(options = {}) {
   const released = await releaseExpiredReservations(options);
   const restorations = await retryPendingRestorations(options);
-  return { released, restorations };
+  const abandoned = await releaseAbandonedReservations(options);
+  return { released, restorations, abandoned };
 }
 
 /**
@@ -309,10 +555,17 @@ export function startReservationSweeper({
 export default {
   releaseExpiredReservations,
   retryPendingRestorations,
+  releaseAbandonedReservations,
+  releaseAbandonedReservation,
   runInventorySweep,
   releaseOrderReservation,
   restoreOrderInventory,
   claimReservationRelease,
+  commitStockReservation,
+  creditProductStock,
+  creditReservedLine,
+  restorationCreditId,
+  reservationDebitId,
   startReservationSweeper,
   getReservationTtlMs,
 };

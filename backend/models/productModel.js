@@ -97,6 +97,28 @@ const productSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
     index: true
+  },
+  // Creation-time reservation ledger (K-21). `services/reservationService.js`
+  // writes `<orderId>:<itemIndex>` here in the SAME atomic update that debits
+  // `stockQuantity`, so an order draft can prove exactly which lines it took.
+  // A crash between the debit and the order commit is therefore recoverable by
+  // the sweep; without this marker those units would be lost silently. Entries
+  // are removed by the release, and the field is hidden from API responses.
+  reservationDebits: {
+    type: [String],
+    default: [],
+    select: false
+  },
+  // Exactly-once restoration ledger (services/reservationService.js).
+  // Each entry is `<orderId>:<itemIndex>` and is written in the SAME atomic
+  // findOneAndUpdate that credits `stockQuantity`, so a crash can never leave
+  // "stock incremented but credit not recorded" (or the reverse). The
+  // `$ne: creditId` filter makes retries and concurrent sweeps no-ops.
+  // Hidden from API responses (internal bookkeeping) via select: false.
+  restorationCredits: {
+    type: [String],
+    default: [],
+    select: false
   }
 }, {
   timestamps: true // Adds createdAt and updatedAt

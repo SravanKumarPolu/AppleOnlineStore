@@ -1,0 +1,10 @@
+# NovaCart robots.txt
+#
+# The storefront is a public catalog: crawl everything. API paths live on the
+# backend origin, so nothing needs disallowing here.
+#
+# OWNER ACTION (docs/10 §16.9 item 10): once the production domain is final,
+# add the sitemap line and ship public/sitemap.xml with ABSOLUTE URLs:
+#   Sitemap: https://<production-domain>/sitemap.xml
+User-agent: *
+Allow: /

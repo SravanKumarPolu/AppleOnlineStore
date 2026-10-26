@@ -29,9 +29,9 @@ those belong to the deployment layer (see [06-DEPLOYMENT.md](./06-DEPLOYMENT.md)
 
 | App | Runtime | Key dependencies | Test tooling |
 |---|---|---|---|
-| `frontend/` | React 18.3.1, Vite 6, TypeScript 5.6, Tailwind 3.4 + daisyUI, framer-motion, `@paypal/react-paypal-js`, socket.io-client, vite-plugin-pwa (Workbox) | axios declared but **unused** (all calls are native `fetch`) | Vitest + @testing-library/react (10 files / 38 tests); **@playwright/test 1.64 — 2 real-browser E2E specs** (COD + Card checkout vs an orchestrated real stack); cypress/msw still declared+unused |
+| `frontend/` | React 18.3.1, Vite 6, TypeScript 5.6, Tailwind 3.4 + daisyUI, framer-motion, `@paypal/react-paypal-js`, socket.io-client, vite-plugin-pwa (Workbox) | no axios (removed by K-10; all calls are native `fetch`); cypress/msw also removed | Vitest + @testing-library/react (24 files / 125 tests); **@playwright/test 1.64 — 3 real-browser E2E specs / 17 tests × Chromium/Firefox/WebKit = 51** (COD + Card checkout, UI audit, axe a11y — vs an orchestrated real backend) |
 | `admin/` | React 19, Vite 6, TypeScript 5.7, Tailwind 4 (CSS-first `@import` + `@plugin daisyui`), daisyUI 5, axios, react-toastify, react-router-dom 6 | No chart library (analytics are stat cards/lists) | Vitest 5 + jsdom + @testing-library/react (13 files / 70 tests — every shipped page, chrome component and API helper covered) |
-| `backend/` | Node ≥ 22 (engines), ESM (`"type":"module"`), Express 4.21, Mongoose 8, Socket.IO 4, `@paypal/checkout-server-sdk`, helmet 8, cors, express-rate-limit, express-mongo-sanitize, express-validator, multer, nodemailer, bcrypt, jsonwebtoken, cloudinary, compression, dotenv | 17 production deps, 0 unused (`audit-deps-usage.mjs`) | Jest 29 + supertest + mongodb-memory-server (41 suites / 404 tests, ESM mode) |
+| `backend/` | Node ≥ 22 (engines), ESM (`"type":"module"`), Express 4.21, Mongoose 8, Socket.IO 4, `@paypal/checkout-server-sdk`, helmet 8, cors, express-rate-limit, express-mongo-sanitize, express-validator, multer, nodemailer, bcrypt, jsonwebtoken, cloudinary, compression, dotenv | 17 production deps, 0 unused (`audit-deps-usage.mjs`) | Jest 29 + supertest + mongodb-memory-server (42 suites / 416 tests, ESM mode) |
 
 ## 3. Backend module map
 
@@ -163,11 +163,13 @@ full only outside production.
 
 ### 4.9 Configuration & guardrails
 
-26 environment variables are read at runtime by live code (inventory:
-[06-DEPLOYMENT.md](./06-DEPLOYMENT.md) §3; a further 10 — `ENABLE_*`,
-social-OAuth, `JWT_EXPIRES_IN`, `PERFORMANCE_SAMPLE_RATE` — are read only by
-the two dead services). `config/startupValidation.js`
-enforces at boot:
+35 backend environment variables are read at runtime by live code (inventory:
+[06-DEPLOYMENT.md](./06-DEPLOYMENT.md) §3), plus `VITE_BACKEND_URL`
+(frontend + admin) and `VITE_PAYPAL_CLIENT_ID` (frontend). The aspirational
+OAuth/analytics variables (`ENABLE_*`, `JWT_EXPIRES_IN`,
+`PERFORMANCE_SAMPLE_RATE`) had no live reader even before the dead services
+were deleted on 2026-10-25, so they are **not** configuration.
+`config/startupValidation.js` enforces at boot:
 
 | Condition | Severity | Effect |
 |---|---|---|
@@ -183,18 +185,21 @@ Values are never logged — only variable names. This makes the classic
 
 ## 5. Dead code map (do not build on these)
 
+**Deleted 2026-10-25 — do not resurrect** (all verified zero-importer at deletion
+time; `adminAuth.js`/`analyticsService.js`/`socialAuthService.js`,
+`frontend/src/pages/AdminCategories.tsx`, `RealTimeOrderStatus.tsx`,
+`MobileBottomNav2.tsx`, `Icon.tsx`, `skr.json`, `admin/src/assets/CarrierIcon.tsx`;
+the frontend cypress/msw declarations are also gone). Deleting them removed the
+last readers of the aspirational env vars and the duplicate auth stack.
+
+**Present but unrouted / unused — do not import, do not "fix" by wiring
+without owner approval:**
+
 | Path | Why dead |
 |---|---|
-| `backend/middleware/adminAuth.js` | Zero importers; semantics incompatible with current admin tokens |
-| `backend/services/analyticsService.js` | CJS `require()` inside an ESM package; non-existent model paths; zero importers |
-| `backend/services/socialAuthService.js` | Imports non-existent `models/User.js`; `ENABLE_SOCIAL_LOGIN`/OAuth vars read only here (dead); no routes |
 | `productController.updateProductStock` | Exported, never routed |
-| `POST /api/address/save` + `models/addressModel.js` | Authenticated but has **no frontend caller**; the real address book lives on the user document |
-| `SalesAnalytics` model | No runtime writer or reader (dev script only populates activity) |
-| `frontend/src/pages/AdminCategories.tsx` | Unrouted orphan (its API calls are admin-guarded and do attach the token) |
-| `frontend/src/components/RealTimeOrderStatus.tsx`, `MobileBottomNav2.tsx`, `Icon.tsx`, `skr.json` | Unused components/assets |
-| `admin/src/assets/CarrierIcon.tsx` + several admin icons | Unused assets |
-| `frontend` cypress + msw (+ `playwright` plain package) | Declared-but-unused test deps; `@playwright/test` + the `test:e2e` script are REAL since 2026-10-24 (see 07-TESTING_PLAN §2c) |
+| `POST /api/address/save` + `models/addressModel.js` | Routed server-side but has **no storefront caller** since K-11; `addressModel` remains live for the authz spec. The real address book is embedded on the user document |
+| `SalesAnalytics` model (inside `models/analyticsModel.js`) | Registered but no runtime writer or reader (the dev script populates activity only). `UserActivity`/`ProductPerformance`/`SearchAnalytics` in the same file ARE live |
 
 ## 6. Known architectural gaps (accepted, tracked)
 
@@ -206,7 +211,12 @@ Values are never logged — only variable names. This makes the classic
    and pagination are the only protections).
 4. **Single process** — Socket.IO rooms and the drain/shutdown design assume
    one instance; horizontal scaling is future DevOps scope.
-5. **Stock is informational** — order placement does not decrement
-   `stockQuantity` nor block on zero (K-5).
+5. **Stock reservation is live, not merely informational** (K-5 fixed
+   2026-10-25): checkout atomically decrements `stockQuantity` and rejects
+   insufficient stock. Restoration on cancel/refund/expiry is exactly-once via
+   the product-side ledger (K-13). Creation is crash-safe too since 2026-10-26
+   (K-21): the order draft is written first, every decrement carries a
+   `<orderId>:<index>` debit marker in the same product update, and an
+   uncommitted draft is settled by the sweep — see `docs/09` §5.2.
 6. **`uploads/` spool dir committed** with 77 dev images — Cloudinary is the
    real store; the dir is transient residue and should be gitignored.

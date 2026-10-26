@@ -1,7 +1,7 @@
 {
-  "name": "SKR E-Commerce - Modern Shopping Experience",
-  "short_name": "SKR Store",
-  "description": "A modern e-commerce platform for seamless shopping experience with PWA support.",
+  "name": "NovaCart — Consumer Electronics Store",
+  "short_name": "NovaCart",
+  "description": "Shop iPhone, iPad, Mac, Apple Watch, AirPods and accessories. Installable PWA with realtime order tracking and secure PayPal checkout.",
   "start_url": "/?source=pwa",
   "display": "standalone",
   "orientation": "portrait-primary",
@@ -22,11 +22,6 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
-    },
-    {
-      "src": "/apple-touch-icon.png",
-      "sizes": "180x180",
-      "type": "image/png"
     },
     {
       "src": "/favicon-32x32.png",
@@ -60,22 +55,6 @@
       "description": "Access your profile and orders",
       "url": "/profile",
       "icons": [{ "src": "/pwa-192x192.png", "sizes": "192x192", "type": "image/png" }]
-    }
-  ],
-  "screenshots": [
-    {
-      "src": "/screenshot-wide.png",
-      "sizes": "1280x720",
-      "type": "image/png",
-      "form_factor": "wide",
-      "label": "SKR Store - Web Homepage"
-    },
-    {
-      "src": "/screenshot-narrow.png",
-      "sizes": "750x1334",
-      "type": "image/png",
-      "form_factor": "narrow",
-      "label": "SKR Store - Mobile Experience"
     }
   ],
   "prefer_related_applications": false,

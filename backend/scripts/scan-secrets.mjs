@@ -20,7 +20,19 @@
 // (private keys, PayPal secrets, AWS keys, …) are never waived.
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+// git listing/history commands are CWD-SCOPED: `git ls-files` and `git log`
+// run from backend/ only ever see backend/** — the rest of the monorepo would
+// be silently unscanned (this exact bug shipped once: a real secret in
+// frontend/.env.example passed `npm run security:secrets`). Anchor every git
+// call and every file read at the REPO TOPLEVEL so the gate is whole-repo
+// regardless of where npm ran it.
+const TOPLEVEL = execSync('git rev-parse --show-toplevel', {
+  cwd: dirname(dirname(fileURLToPath(import.meta.url))), // backend/
+  encoding: 'utf8',
+}).trim();
 
 // Values that are obviously templates — same spirit as
 // config/startupValidation.js's placeholder detection.
@@ -71,6 +83,22 @@ export const isPlaceholder = (value) =>
 const uriHasCredentials = (value) => /^mongodb(\+srv)?:\/\/[^/@]+:[^/@]+@/.test(value);
 
 /**
+ * An EXPIRED JWT can never authenticate (servers enforce `exp`), so it is not
+ * a live credential. Decode the payload and waive only provably-expired
+ * tokens — e.g. a fabricated mock retained in an agent checkpoint snapshot.
+ * Undecodable tokens fail CLOSED (treated as live).
+ */
+export function isExpiredJwt(token) {
+  const payload = token.split('.')[1];
+  try {
+    const claims = JSON.parse(Buffer.from(payload, 'base64').toString('utf8'));
+    return typeof claims.exp === 'number' && claims.exp * 1000 < Date.now();
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Analyse one text blob. Pure (no I/O), so the test suite can prove that a
  * REAL-looking value inside a fixture path is still reported.
  *
@@ -82,14 +110,17 @@ export function analyzeText(text, where) {
 
   for (const { id, re, skipInFixtures } of PATTERNS) {
     if (fixture && skipInFixtures) continue;
-    if (re.test(text)) findings.push({ where, kind: id, detail: 'pattern match' });
+    const match = re.exec(text);
+    if (!match) continue;
+    if (id === 'jwt' && isExpiredJwt(match[0])) continue;
+    findings.push({ where, kind: id, detail: 'pattern match' });
   }
 
   for (const match of text.matchAll(ASSIGNMENT)) {
     const [, name, value] = match;
     if (isPlaceholder(value)) continue;
     // Reject obvious non-secrets: env var references, shell expansion, booleans.
-    if (/^(true|false|null|undefined|\$|\{\{)/i.test(value)) continue;
+    if (/^(true|false|null|undefined|\$|\{\{|process\.env\b)/i.test(value)) continue;
     if (name === 'MONGODB_URI' && !uriHasCredentials(value)) continue;
     // Fixtures: waiver only for values that are obviously fabricated. A long,
     // random value pasted into a spec is reported like anywhere else.
@@ -101,7 +132,7 @@ export function analyzeText(text, where) {
 }
 
 function scanWorkingTree() {
-  const files = execSync('git ls-files', { encoding: 'utf8' })
+  const files = execSync('git ls-files', { cwd: TOPLEVEL, encoding: 'utf8' })
     .split('\n')
     .filter(Boolean)
     // Lock files and images are noise; .env files must never be tracked.
@@ -117,7 +148,7 @@ function scanWorkingTree() {
   for (const file of files) {
     let text;
     try {
-      text = readFileSync(file, 'utf8');
+      text = readFileSync(join(TOPLEVEL, file), 'utf8');
     } catch {
       continue; // binary/unreadable
     }
@@ -129,6 +160,7 @@ function scanWorkingTree() {
 function scanHistory() {
   // Diff every commit, but only the lines an assignment/pattern can hide in.
   const log = execSync('git log --all -p --no-color -- . ":(exclude)*package-lock.json"', {
+    cwd: TOPLEVEL,
     encoding: 'utf8',
     maxBuffer: 1024 * 1024 * 256,
   });
@@ -145,14 +177,17 @@ function scanHistory() {
     if (isFixturePath(currentFile)) continue;
     const added = line.slice(1);
     for (const { id, re } of PATTERNS) {
-      if (re.test(added)) {
-        findings.push({ where: `commit ${commit}`, kind: id, detail: 'historical match' });
-      }
+      const match = re.exec(added);
+      if (!match) continue;
+      // Same expiry rule as the tree scan: a provably expired JWT can never
+      // authenticate, so a historical copy of one is not a live credential.
+      if (id === 'jwt' && isExpiredJwt(match[0])) continue;
+      findings.push({ where: `commit ${commit} (${currentFile})`, kind: id, detail: 'historical match' });
     }
     for (const match of added.matchAll(ASSIGNMENT)) {
       const [, name, value] = match;
       if (isPlaceholder(value)) continue;
-      if (/^(true|false|null|undefined|\$|\{\{)/i.test(value)) continue;
+      if (/^(true|false|null|undefined|\$|\{\{|process\.env\b)/i.test(value)) continue;
       if (name === 'MONGODB_URI' && !uriHasCredentials(value)) continue;
       findings.push({
         where: `commit ${commit} (${currentFile})`,

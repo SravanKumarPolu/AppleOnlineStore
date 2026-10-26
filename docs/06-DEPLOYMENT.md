@@ -44,7 +44,7 @@ Terraform, or process-manager config. What exists:
 cd backend
 cp .env.example .env          # then fill REAL values (see §3)
 npm install
-npm run test:security         # regression gate (41 suites / 404 tests)
+npm run test:security         # regression gate (42 suites / 416 tests)
 node server.js                # listens on 0.0.0.0:$PORT
 
 # Storefront
@@ -95,7 +95,7 @@ npm run build
    retry exhaustion, signature fail-closed, mismatch gates, race sweep,
    idempotency).
 
-## 3. Environment variables — the real 34 (runtime-read, verified 2026-10-26)
+## 3. Environment variables — the real 35 (runtime-read, verified 2026-10-26)
 
 `backend/.env`:
 
@@ -125,6 +125,7 @@ npm run build
 | `CLOUDINARY_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_SECRET_KEY` | image hosting | exact names as read by `config/cloudinary.js` | |
 | `ENABLE_DEBUG_ENDPOINTS` | expose debug endpoints in production | default `false` (404) |
 | `RATE_LIMIT_MAX` | per-IP requests / 15 min (default 1000) | optional; raise only on a disposable load target |
+| `AUTH_RATE_LIMIT_MAX` | auth-endpoint requests / 15 min / IP under `/api/user/*` (default 20) | optional; never raise on a real deployment to make a suite pass |
 
 `frontend/.env`: `VITE_BACKEND_URL`, `VITE_PAYPAL_CLIENT_ID` — the only two
 the code reads (the second was missing from the old template; empty value
@@ -133,7 +134,8 @@ the wrong PayPal app — K-2).
 `admin/.env`: `VITE_BACKEND_URL` (fallback `http://localhost:3001`).
 
 `backend/.env.example` was rewritten 2026-10-25 (K-8 fix) to document exactly
-these 27 runtime variables plus a clearly-marked dev/test section — the old
+these 35 runtime variables (30 active + 5 optional commented out) plus a
+clearly-marked dev/test section — the old
 template's aspirational Stripe/Razorpay/OAuth/Redis/Twilio block is gone.
 
 (Historical note: `ENABLE_ANALYTICS` / `PERFORMANCE_SAMPLE_RATE` were read
@@ -164,12 +166,12 @@ never printed, only variable names.
 | Gate | Status |
 |---|---|
 | Credential rotation (MongoDB, JWT_SECRET, ADMIN_PASSWORD, Cloudinary keys, PayPal secret) | 🟡 **In progress** — `JWT_SECRET` + `ADMIN_PASSWORD` rotated and live-verified 2026-10-24 ([docs/devops/09](./devops/09-GO-LIVE-GATES-EXECUTION.md)); provider credentials (PayPal secret/webhook id, MongoDB Atlas password, Cloudinary, SMTP) remain owner dashboard rotations — runbook: [docs/devops/07-CREDENTIAL-ROTATION-RUNBOOK.md](./devops/07-CREDENTIAL-ROTATION-RUNBOOK.md) |
-| Git history purge / re-publish | ⛔ Blocked on owner approval (procedure in `SECURITY_GATE_PLAN.md` §S1) — the leak is confined to the owner's canonical repo; this working copy and all delivered archives verified clean (docs/devops/09 §1.4). Deploying from an archive that excludes `.git` is the interim path |
+| Git history purge / re-publish | ⛔ Blocked on owner approval (procedure in `SECURITY_GATE_PLAN.md` §S1) — the leak is confined to the owner's canonical repo; this working copy's tree + history scan clean (docs/devops/09 §1.4). **Correction (2026-10-26):** a previously distributed ZIP *did* contain the ignored `backend/.env` (docs/10 §16.1) — its credentials are ROTATION REQUIRED, and new archives must be built only via `npm run security:distribution`. Deploying from a verified `git archive` that excludes `.git` remains the interim path |
 | PayPal sandbox end-to-end validation | ❓ UNVERIFIED for the real-PayPal items — all locally-executable checklist items (fail-closed proofs, topology boot, full regression gate) PASS 2026-10-24 ([docs/devops/09](./devops/09-GO-LIVE-GATES-EXECUTION.md) §2); remaining items need sandbox creds + a public HTTPS host — checklist: `docs/devops/08-…` |
-| npm audit advisories (backend 64 / frontend 55 / admin 22 incl. dev trees) | 📋 Remediation plan drafted, pending approval (S2) |
+| npm audit advisories | ✅ **Re-baselined 2026-10-26** (non-mutating `npm audit`): backend **0**, admin **0**, frontend **3 moderate** — build-time Tailwind 3/PostCSS chain, no high/critical; remediation is the planned Tailwind 4 window (S2) |
 
 Phase 1 conclusion (preserved): **CONDITIONAL GO** — all code-level gates
-passed (13 suites / 111 tests at that time; since grown to 41 suites / 404 tests — see `docs/devops/00-PRE-DEVOPS-QUALITY-BASELINE.md`); deployment is gated on the owner actions
+passed (13 suites / 111 tests at that time; since grown to 42 suites / 416 tests — see `docs/devops/00-PRE-DEVOPS-QUALITY-BASELINE.md`); deployment is gated on the owner actions
 above (`docs/devops/05-PHASE1-COMPLETION-REPORT.md` §7).
 
 ## 6. PLANNED — DevOps roadmap (does NOT exist yet)

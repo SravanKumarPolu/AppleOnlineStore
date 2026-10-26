@@ -154,7 +154,12 @@ describe('POST /api/orders/paypal/webhook — recoverable idempotency', () => {
       .set(WEBHOOK_HEADERS)
       .send(webhookEvent('WH-EVT-LEGACY', 'PAYMENT.CAPTURE.COMPLETED', 'CAP-TEST-123'));
 
-    expect(res.status).toBe(200);
+    // The body is included in the thrown error: this spec once returned a
+    // single unexplained 401 in a full-suite run and could not be reproduced
+    // in isolation, so a future occurrence must be diagnosable from CI output.
+    if (res.status !== 200) {
+      throw new Error(`webhook responded ${res.status}: ${JSON.stringify(res.body)}`);
+    }
     expect((await orderModel.findById(orderId)).paymentStatus).toBe('completed');
     const doc = await getEventDoc('WH-EVT-LEGACY');
     expect(doc.status).toBe('completed');
