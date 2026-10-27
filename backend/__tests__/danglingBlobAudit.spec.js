@@ -14,17 +14,17 @@ describe('dangling-object audit', () => {
   it('parses env-style assignments, quotes, exports and inline comments', () => {
     const text = [
       'JWT_SECRET="quoted-value-1234567890"',
-      'export ADMIN_PASSWORD=exported-value-1234567890',
+      'export ADMIN_PASSWORD=test-exported-value-123456',
       'MONGODB_URI=mongodb+srv://user:pass@cluster.example.net/db',
-      'PAYPAL_CLIENT_SECRET=unquoted-value-1234567890 # trailing note',
+      'PAYPAL_CLIENT_SECRET=test-unquoted-value-123456 # trailing note',
     ].join('\n');
 
     const found = extractAssignments(text);
 
     expect(found.get('JWT_SECRET')).toBe('quoted-value-1234567890');
-    expect(found.get('ADMIN_PASSWORD')).toBe('exported-value-1234567890');
+    expect(found.get('ADMIN_PASSWORD')).toBe('test-exported-value-123456');
     expect(found.get('MONGODB_URI')).toBe('mongodb+srv://user:pass@cluster.example.net/db');
-    expect(found.get('PAYPAL_CLIENT_SECRET')).toBe('unquoted-value-1234567890');
+    expect(found.get('PAYPAL_CLIENT_SECRET')).toBe('test-unquoted-value-123456');
   });
 
   it('parses minified JSON credential pairs on a single line', () => {

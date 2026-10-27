@@ -205,6 +205,7 @@ PayPal SDK/approve-link wiring remains covered by mocked-edge backend specs
 | `cd admin && npm run lint` / `build` / `type-check` | ✅ All clean (`type-check` added 2026-10-25, K-7 fix) |
 | `cd admin && npm run test -- --run` | ✅ Real since 2026-10-24 (vitest, 13 files / 70 tests — incl. the K-6 MobileNav/NotFound suites); bare `npm test` starts **watch mode** |
 | `cd backend && npm run db:seed` / `db:migrate` / `email:test` | ✅ Fixed 2026-10-25 (K-7): point at the real `seedCategories.js` / `migrateOrders.js` / `test-email.js` (SMTP verify; needs SMTP env; sends only with `TEST_EMAIL_TO`) |
+| `cd backend && npm run db:audit` | ✅ Read-only migration/integrity audit (`scripts/checkDatabase.js`, rewritten 2026-10-27 from the debug script that printed a full sample order — customer PII). Prints only database/collection names, counts, index metadata and booleans — never document contents or credentials. Verifies effective DB resolution (URI path wins), the 12 expected collections, snapshot counts (warning unless `--strict`; override with `--expect '{"orders":91}'`), the unique `(userId, idempotencyKey)` index, duplicate/orphan invariants, and boot-sweep impact. Exit 0 = OK · 1 = defect · 2 = could not connect (e.g. Atlas IP allowlist — the message is redacted, never the URI) |
 | `cd backend && npm install` | ✅ postinstall no-op removed 2026-10-25 (patch-package had no `patches/` dir) |
 
 ## 4. Feature ↔ code ↔ test traceability matrix

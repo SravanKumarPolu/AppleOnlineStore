@@ -16,6 +16,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "db:seed": "node scripts/seedCategories.js",
+    "db:audit": "node scripts/checkDatabase.js",
     "db:migrate": "node scripts/migrateOrders.js",
     "analytics:populate": "node scripts/populateAnalytics.js",
     "email:test": "node scripts/test-email.js",

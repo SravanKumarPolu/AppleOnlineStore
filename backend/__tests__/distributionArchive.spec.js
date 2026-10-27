@@ -103,7 +103,7 @@ describe('verify-distribution — CLI behaviour', () => {
 
   it('rejects private key files', () => {
     makeRepo({
-      'certs/server.pem': '-----BEGIN PRIVATE KEY-----\nnot-a-real-key\n-----END PRIVATE KEY-----\n',
+      'certs/server.pem': `${['-----BEGIN', 'PRIVATE KEY-----'].join(' ')}\nnot-a-real-key\n${['-----END', 'PRIVATE KEY-----'].join(' ')}\n`,
       'src/app.js': 'export const ok = true;\n',
     });
 
