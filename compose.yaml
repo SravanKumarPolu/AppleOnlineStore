@@ -1,0 +1,67 @@
+
+name: novacart
+
+services:
+  backend:
+    image: novacart-backend:v2
+    env_file:
+      - ./backend/.env
+    environment:
+      CORS_EXTRA_ORIGINS: "http://localhost:8080,http://localhost:8081"
+    ports:
+      - "3001:3001"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3001/health/ready').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - novacart-network
+
+  frontend:
+    image: novacart-frontend:v2
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - -q
+        - --spider
+        - "http://127.0.0.1:8080/"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - novacart-network
+
+  admin:
+    image: novacart-admin:v1
+    ports:
+      - "8081:8080"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - -q
+        - --spider
+        - "http://127.0.0.1:8080/"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - novacart-network
+
+networks:
+  novacart-network:
+    driver: bridge

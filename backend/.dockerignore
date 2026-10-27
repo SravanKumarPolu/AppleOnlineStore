@@ -1,0 +1,33 @@
+
+# Dependencies
+node_modules
+**/node_modules
+
+# Environment secrets
+.env
+.env.*
+!.env.example
+
+# Git
+.git
+.gitignore
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+
+# Test and coverage files
+coverage/
+.nyc_output/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+
+# Build and temporary files
+dist/
+tmp/
+temp/
+*.zip
