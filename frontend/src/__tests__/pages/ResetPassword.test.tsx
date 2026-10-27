@@ -105,4 +105,30 @@ describe('ResetPassword page', () => {
     expect(screen.getByText('One uppercase letter')).toBeInTheDocument();
     expect(screen.getByText('One special character (@$!%*?&)')).toBeInTheDocument();
   });
+
+  it('labels both password visibility toggles for screen readers', () => {
+    renderPage();
+
+    expect(screen.getByRole('button', { name: 'Show password' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show confirm password' })).toBeInTheDocument();
+  });
+
+  it('clears the submitted passwords and the stale local session on success', async () => {
+    const setToken = vi.fn();
+    renderWithProviders(<ResetPassword />, {
+      contextValue: createMockContextValue({ setToken }),
+      route: '/reset-password?token=stale-session',
+    });
+
+    fireEvent.change(screen.getByLabelText(/^New Password/i), { target: { value: 'Str0ng!pass' } });
+    fireEvent.change(screen.getByLabelText(/^Confirm New Password$/i), { target: { value: 'Str0ng!pass' } });
+    fireEvent.click(screen.getByRole('button', { name: /Reset Password/i }));
+
+    // AF-2 on the backend bumps tokenVersion, so every existing JWT for this
+    // account is dead — the frontend must drop the stale local session and
+    // the sensitive form state with it.
+    await waitFor(() => expect(setToken).toHaveBeenCalledWith(''));
+    expect(await screen.findByText(/has been reset successfully/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^New Password/i)).not.toBeInTheDocument();
+  });
 });

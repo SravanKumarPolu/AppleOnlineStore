@@ -170,6 +170,32 @@ test('login form validation blocks an empty submit (no navigation, no token)', a
   expect(token).toBeNull();
 });
 
+test('password recovery modal is keyboard-accessible and never fails silently', async ({ page }) => {
+  await page.goto('/login');
+
+  // Open the modal; focus must move into the dialog (WCAG 2.4.3).
+  const openButton = page.getByRole('button', { name: /forgot password/i });
+  await openButton.click();
+  const dialog = page.getByRole('dialog', { name: 'Reset Password' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel('Email Address')).toBeFocused();
+
+  // Escape closes the modal.
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+
+  // An unknown address takes the backend's enumeration-safe success path, so
+  // the visible outcome is deterministic: the confirmation panel. (The real
+  // E2E backend has no SMTP — a registered address surfaces the safe error
+  // path instead; both are covered by the PasswordRecovery unit suite.)
+  await openButton.click();
+  await dialog.getByLabel('Email Address').fill('e2e-no-such-account@example.com');
+  await dialog.getByRole('button', { name: /send reset link/i }).click();
+  await expect(dialog.getByText(/if an account exists for this email/i)).toBeVisible({
+    timeout: 15000,
+  });
+});
+
 test('cart page redirects anonymous users to login (protected route)', async ({ page }) => {
   await page.goto('/cart', { waitUntil: 'networkidle' });
   await page.waitForURL(/\/login|\/cart/, { timeout: 8000 });

@@ -1,4 +1,5 @@
 import { FormEvent, useState, useEffect, useRef } from "react";
+import { toast } from "react-toastify";
 import { useShopContext } from "../context/shop-context";
 import { useNavigate } from "react-router-dom";
 import { usePerformanceMode } from "../hooks/usePerformanceMode";
@@ -78,7 +79,7 @@ const Login = () => {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ email: recoveryEmail }),
+        body: JSON.stringify({ email: recoveryEmail.trim().toLowerCase() }),
       });
 
       const data = await response.json();
@@ -95,26 +96,12 @@ const Login = () => {
     }
   };
 
-  // Biometric authentication handler
-  const handleBiometricAuth = async () => {
-    try {
-      if ('credentials' in navigator) {
-        const credential = await navigator.credentials.get({
-          publicKey: {
-            challenge: new Uint8Array(32),
-            rpId: window.location.hostname,
-            userVerification: 'preferred'
-          }
-        });
-        
-        if (credential) {
-          console.log('Biometric authentication successful');
-        }
-      }
-    } catch (error) {
-      console.error('Biometric authentication error:', error);
-      setError('Biometric authentication not available or failed');
-    }
+  // Biometric sign-in has no backend registration flow yet (the user-schema
+  // biometric fields are vestigial). Announce the unavailable state instead of
+  // a client-side-only WebAuthn attempt that could "succeed" without ever
+  // logging the shopper in.
+  const handleBiometricAuth = () => {
+    toast.info('Biometric sign-in is not available yet. Please use your email and password.');
   };
 
   // Real-time validation functions
@@ -129,7 +116,9 @@ const Login = () => {
   const validateEmail = (email: string) => {
     if (email.length === 0) return "";
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) return "Please enter a valid email address";
+    // Accept pasted addresses padded with stray whitespace — the value is
+    // normalized at submission anyway.
+    if (!emailRegex.test(email.trim())) return "Please enter a valid email address";
     return "";
   };
 
@@ -196,10 +185,15 @@ const Login = () => {
       let success = false;
       
       if (currentState === "Login") {
-        success = await loginUser(email, password);
+        // Registration stores a lowercased email (frontend and backend both
+        // normalize); the backend login does an exact-case findOne, so the
+        // same normalization must happen here — mixed case or a stray
+        // trailing space would otherwise produce a false "Invalid credentials".
+        const normalizedEmail = email.trim().toLowerCase();
+        success = await loginUser(normalizedEmail, password);
         
         if (success && rememberMe) {
-          localStorage.setItem('rememberedEmail', email);
+          localStorage.setItem('rememberedEmail', normalizedEmail);
         } else if (!rememberMe) {
           localStorage.removeItem('rememberedEmail');
         }
@@ -218,13 +212,13 @@ const Login = () => {
         }
 
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(email)) {
+        if (!emailRegex.test(email.trim())) {
           setError("Please enter a valid email address");
           setIsLoading(false);
           return;
         }
 
-        success = await registerUser(name.trim(), email.toLowerCase(), password);
+        success = await registerUser(name.trim(), email.trim().toLowerCase(), password);
       }
 
       if (success) {
@@ -444,6 +438,7 @@ const Login = () => {
                       ref={emailInputRef}
                       id="email"
                       type="email"
+                      autoComplete="email"
                       className={`w-full pl-14 pr-4 py-4 lg:py-5 text-base border-2 border-gray-200 rounded-2xl focus:outline-none focus:ring-4 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all duration-300 bg-white/80 backdrop-blur-sm text-gray-900 placeholder-gray-500 group-hover:border-gray-300 input-focus-enhanced ${
                         fieldErrors.email 
                           ? 'border-red-300 focus:ring-red-500/20 focus:border-red-500' 
@@ -508,6 +503,7 @@ const Login = () => {
                       ref={passwordInputRef}
                       id="password"
                       type={showPassword ? "text" : "password"}
+                      autoComplete={currentState === "Sign Up" ? "new-password" : "current-password"}
                       className={`w-full pl-14 pr-14 py-4 lg:py-5 text-base border-2 border-gray-200 rounded-2xl focus:outline-none focus:ring-4 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all duration-300 bg-white/80 backdrop-blur-sm text-gray-900 placeholder-gray-500 group-hover:border-gray-300 input-focus-enhanced ${
                         fieldErrors.password 
                           ? 'border-red-300 focus:ring-red-500/20 focus:border-red-500' 
@@ -521,7 +517,7 @@ const Login = () => {
                       onFocus={() => setFocusedField('password')}
                       onBlur={() => setFocusedField('')}
                       required
-                      minLength={8}
+                      minLength={currentState === "Sign Up" ? 8 : undefined}
                       aria-describedby={fieldErrors.password ? "password-error" : undefined}
                       aria-invalid={!!fieldErrors.password}
                     />
@@ -719,6 +715,7 @@ const Login = () => {
                 <button 
                   className="w-full py-4 lg:py-5 px-6 bg-white border-2 border-gray-200 rounded-2xl hover:bg-gray-50 hover:border-gray-300 transition-all duration-300 flex items-center justify-center space-x-3 text-gray-700 font-semibold shadow-lg hover:shadow-xl text-sm lg:text-base relative overflow-hidden btn-press transform hover:scale-[1.02] active:scale-[0.98]"
                   disabled={isSocialLoading}
+                  onClick={() => toast.info('Google sign-in is not available yet. Please use your email and password.')}
                 >
                   {/* Enhanced Loading Background for Social Buttons */}
                   {isSocialLoading && (
@@ -742,7 +739,9 @@ const Login = () => {
                   )}
                 </button>
                 
-                <button className="w-full py-4 lg:py-5 px-6 bg-white border-2 border-gray-200 rounded-2xl hover:bg-gray-50 hover:border-gray-300 transition-all duration-300 flex items-center justify-center space-x-3 text-gray-700 font-semibold shadow-lg hover:shadow-xl text-sm lg:text-base btn-press transform hover:scale-[1.02] active:scale-[0.98]">
+                <button className="w-full py-4 lg:py-5 px-6 bg-white border-2 border-gray-200 rounded-2xl hover:bg-gray-50 hover:border-gray-300 transition-all duration-300 flex items-center justify-center space-x-3 text-gray-700 font-semibold shadow-lg hover:shadow-xl text-sm lg:text-base btn-press transform hover:scale-[1.02] active:scale-[0.98]"
+                  onClick={() => toast.info('Facebook sign-in is not available yet. Please use your email and password.')}
+                >
                   <FacebookIcon 
                     size="lg" 
                     className="transition-transform duration-300"
@@ -795,6 +794,7 @@ const Login = () => {
         isOpen={showPasswordRecovery}
         onClose={() => setShowPasswordRecovery(false)}
         onRecoveryRequest={handlePasswordRecovery}
+        initialEmail={email}
       />
     </div>
   );

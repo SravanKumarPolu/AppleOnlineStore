@@ -7,6 +7,10 @@
     <!-- Viewport & Theme -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#3b82f6" />
+    <!-- Reset links carry ?token=… in the URL — keep query strings out of
+         cross-origin Referer headers (the default in modern browsers, now
+         pinned explicitly). -->
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
 
     <!-- App Capabilities -->
     <meta name="apple-mobile-web-app-capable" content="yes" />

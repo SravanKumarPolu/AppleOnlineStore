@@ -37,6 +37,8 @@ describe('Login (admin panel)', () => {
   });
 
   it('posts the credentials to /api/user/admin and stores the token on success', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const postSpy = vi
       .spyOn(axios, 'post')
       .mockResolvedValue({ data: { success: true, token: 'admin-token-123' } });
@@ -51,6 +53,8 @@ describe('Login (admin panel)', () => {
     );
     expect(setToken).toHaveBeenCalledWith('admin-token-123');
     expect(toast.success).toHaveBeenCalledWith('Login successful! Welcome back.');
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 
   it('maps a 401 to the dedicated invalid-credentials toast and never stores a token', async () => {
@@ -90,6 +94,23 @@ describe('Login (admin panel)', () => {
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith('Server error. Please try again later.')
     );
+    expect(setToken).not.toHaveBeenCalled();
+  });
+
+  it('shows validation messages returned for a 400 response', async () => {
+    const error = new AxiosError(
+      'Request failed with status code 400',
+      AxiosError.ERR_BAD_REQUEST,
+      config,
+      undefined,
+      responseOf(400, { success: false, message: 'Validation failed' })
+    );
+    vi.spyOn(axios, 'post').mockRejectedValue(error);
+
+    render(<Login setToken={setToken} />);
+    await fillAndSubmit();
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Validation failed'));
     expect(setToken).not.toHaveBeenCalled();
   });
 

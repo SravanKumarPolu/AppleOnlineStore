@@ -18,27 +18,18 @@ const Login: React.FC<LoginProps> = ({ setToken }) => {
     setIsLoading(true);
     
     try {
-      console.log('🔐 Attempting admin login with email:', email);
-      
       const response = await axios.post(backendUrl + "/api/user/admin", { email, password });
-      
-      console.log('🔐 Admin login response:', response.data);
       
       if (response.data.success) {
         setToken(response.data.token);
-        console.log('✅ Admin login successful, token set');
         toast.success("Login successful! Welcome back.");
       } else {
-        console.error('❌ Admin login failed:', response.data.message);
         toast.error(response.data.message);
       }
     } catch (error) {
-      console.error('❌ Admin login error:', error);
-
       const responseError = getAxiosErrorResponse(error);
       if (responseError) {
         const { status, data } = responseError;
-        console.error('❌ Response error:', { status, data });
 
         if (status === 401) {
           toast.error("Invalid admin credentials. Please check your email and password.");
@@ -48,10 +39,8 @@ const Login: React.FC<LoginProps> = ({ setToken }) => {
           toast.error(data?.message || "Login failed. Please try again.");
         }
       } else if (isNetworkError(error)) {
-        console.error('❌ Network error:', error);
         toast.error("Network error. Please check your connection.");
       } else {
-        console.error('❌ Other error:', error);
         toast.error(getApiErrorMessage(error, "Something went wrong! Please try again."));
       }
     } finally {

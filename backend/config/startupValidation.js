@@ -104,7 +104,7 @@ export function validateRuntimeConfig({
   // --- Auth secrets ---------------------------------------------------------
   flag('JWT_SECRET', env.JWT_SECRET, 'all authenticated routes (incl. admin) reject every request', { fatalInProd: true });
 
-  // --- Admin login (compared by middleware/adminAuth.js) --------------------
+  // --- Admin login (validated by controllers/userController.js) ------------
   flag('ADMIN_EMAIL', env.ADMIN_EMAIL, 'admin panel login is unavailable');
   flag('ADMIN_PASSWORD', env.ADMIN_PASSWORD, 'admin panel login is unavailable');
 

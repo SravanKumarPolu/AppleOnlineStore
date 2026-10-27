@@ -291,9 +291,17 @@ const resetPassword = async (req, res, next) => {
 const adminLogin = async (req, res, next) => {
   try {
     const { email, password } = req.body;
+    const normalizeAdminEmail = (value) =>
+      typeof value === 'string' ? value.trim().toLowerCase() : '';
+    const configuredAdminEmail = normalizeAdminEmail(process.env.ADMIN_EMAIL);
+    const configuredAdminPassword = process.env.ADMIN_PASSWORD;
 
     // Validate environment variables
-    if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD) {
+    if (
+      !configuredAdminEmail ||
+      typeof configuredAdminPassword !== 'string' ||
+      configuredAdminPassword.trim().length === 0
+    ) {
       return res.status(500).json({
         success: false,
         message: "Admin configuration error"
@@ -301,10 +309,11 @@ const adminLogin = async (req, res, next) => {
     }
 
     // Check credentials
-    if (email === process.env.ADMIN_EMAIL && password === process.env.ADMIN_PASSWORD) {
+    const submittedAdminEmail = normalizeAdminEmail(email);
+    if (submittedAdminEmail === configuredAdminEmail && password === configuredAdminPassword) {
       const token = jwt.sign(
         { 
-          email: email, 
+          email: submittedAdminEmail,
           role: 'admin',
           type: 'admin' 
         }, 
@@ -316,7 +325,7 @@ const adminLogin = async (req, res, next) => {
         success: true, 
         token,
         user: {
-          email: email,
+          email: submittedAdminEmail,
           role: 'admin'
         }
       });

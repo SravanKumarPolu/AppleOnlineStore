@@ -1,10 +1,12 @@
 import { FormEvent, useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "react-toastify";
+import { useShopContext } from "../context/shop-context";
 
 const ResetPassword = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { setToken } = useShopContext();
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -82,6 +84,12 @@ const ResetPassword = () => {
 
       if (data.success) {
         setSuccess(true);
+        // The backend bumps tokenVersion on reset (AF-2), so every existing
+        // JWT for this account is now invalid — drop the stale local session
+        // too, and clear the submitted passwords from state.
+        setNewPassword("");
+        setConfirmPassword("");
+        setToken("");
         toast.success("Password reset successfully!");
         setTimeout(() => {
           navigate('/login');
@@ -165,7 +173,10 @@ const ResetPassword = () => {
             <form onSubmit={handleSubmit} className="space-y-6 lg:space-y-8 xl:space-y-10">
               {/* Error Message */}
               {error && (
-                <div className="bg-gradient-to-r from-red-50 to-red-100 border-2 border-red-200 text-red-900 px-4 py-3 rounded-2xl text-sm font-bold animate-fade-in relative overflow-hidden shadow-lg">
+                <div
+                  className="bg-gradient-to-r from-red-50 to-red-100 border-2 border-red-200 text-red-900 px-4 py-3 rounded-2xl text-sm font-bold animate-fade-in relative overflow-hidden shadow-lg"
+                  role="alert"
+                >
                   <div className="flex items-center space-x-3 relative z-10">
                     <svg className="w-5 h-5 text-red-600 flex-shrink-0 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -185,6 +196,7 @@ const ResetPassword = () => {
                   <input
                     id="newPassword"
                     type={showPassword ? "text" : "password"}
+                    autoComplete="new-password"
                     className="w-full pl-12 pr-12 py-3 lg:py-4 xl:py-5 text-sm lg:text-base xl:text-lg border-2 rounded-2xl focus:outline-none focus:ring-4 focus:ring-blue-500/20 transition-all duration-300 bg-white/60 backdrop-blur-sm text-gray-900 placeholder-gray-500 group-hover:border-blue-400 group-hover:shadow-lg group-hover:bg-white/90 border-gray-300 focus:ring-blue-500/20"
                     placeholder="Enter your new password"
                     value={newPassword}
@@ -201,6 +213,7 @@ const ResetPassword = () => {
                     type="button"
                     className="absolute inset-y-0 right-0 pr-4 flex items-center hover:bg-gray-50/80 rounded-r-2xl transition-all duration-200 hover:scale-110 active:scale-95 hover:shadow-inner"
                     onClick={() => setShowPassword(!showPassword)}
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
                   >
                     <svg className="h-5 w-5 lg:h-6 lg:w-6 xl:h-7 xl:w-7 text-gray-500 hover:text-gray-700 transition-all duration-200 hover:rotate-12" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                       {showPassword ? (
@@ -222,6 +235,7 @@ const ResetPassword = () => {
                   <input
                     id="confirmPassword"
                     type={showConfirmPassword ? "text" : "password"}
+                    autoComplete="new-password"
                     className="w-full pl-12 pr-12 py-3 lg:py-4 xl:py-5 text-sm lg:text-base xl:text-lg border-2 rounded-2xl focus:outline-none focus:ring-4 focus:ring-blue-500/20 transition-all duration-300 bg-white/60 backdrop-blur-sm text-gray-900 placeholder-gray-500 group-hover:border-blue-400 group-hover:shadow-lg group-hover:bg-white/90 border-gray-300 focus:ring-blue-500/20"
                     placeholder="Confirm your new password"
                     value={confirmPassword}
@@ -238,6 +252,7 @@ const ResetPassword = () => {
                     type="button"
                     className="absolute inset-y-0 right-0 pr-4 flex items-center hover:bg-gray-50/80 rounded-r-2xl transition-all duration-200 hover:scale-110 active:scale-95 hover:shadow-inner"
                     onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
                   >
                     <svg className="h-5 w-5 lg:h-6 lg:w-6 xl:h-7 xl:w-7 text-gray-500 hover:text-gray-700 transition-all duration-200 hover:rotate-12" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                       {showConfirmPassword ? (

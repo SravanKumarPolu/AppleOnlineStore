@@ -86,8 +86,8 @@ export const validateUserLogin = [
 // Admin login validation
 export const validateAdminLogin = [
   body('email')
+    .trim()
     .isEmail()
-    .normalizeEmail()
     .withMessage('Please provide a valid email address'),
   
   body('password')

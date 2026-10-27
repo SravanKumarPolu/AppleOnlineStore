@@ -5,10 +5,11 @@
 > [docs/10-FINAL-STABILIZATION-REPORT.md](./10-FINAL-STABILIZATION-REPORT.md);
 > the preserved pre-fix baseline is
 > [devops/00-PRE-DEVOPS-QUALITY-BASELINE.md](./devops/00-PRE-DEVOPS-QUALITY-BASELINE.md)).
-> Current: **backend 43 suites / 441 tests PASS · frontend 24 files / 125
-> tests PASS · admin 13 files / 70 tests PASS · storefront E2E 3 spec files /
-> 17 tests × Chromium/Firefox/WebKit = 51 PASS (real browsers vs the real
-> backend).** This file is the authoritative command reference — several npm
+> Current: **backend 43 suites / 449 tests PASS · frontend 25 files / 142
+> tests PASS · admin 13 files / 71 tests PASS · storefront E2E 3 spec files /
+> 18 tests × Chromium/Firefox/WebKit = 54 PASS (real browsers vs the real
+> backend; re-executed 2026-10-27 after the customer-auth hardening).** This
+> file is the authoritative command reference — several npm
 > scripts lie (see §3).
 >
 > **Chain:** … → [05-API_REFERENCE.md](./05-API_REFERENCE.md) →
@@ -95,7 +96,7 @@ remainder are:
 cd frontend && npm run test -- --run
 ```
 
-24 files / 125 tests (jsdom + @testing-library/react): ShopContext guard,
+25 files / 142 tests (jsdom + @testing-library/react): ShopContext guard,
 Product page, PayPalPayment wrapper, useCart, useWebSocket, BestSeller,
 LatestCollection, ProductItems, PlaceOrder checkout wiring (COD/Card submit
 `/api/orders`, cart clear, redirect, failure/empty-cart/login guards,
@@ -168,9 +169,9 @@ run — no manual setup:
 2. **Storefront**: the vite dev server on `:5173` (default CORS-allowed
    origin).
 
-`e2e/checkout.spec.ts` (3), `e2e/ui-audit.spec.ts` (10) and
+`e2e/checkout.spec.ts` (3), `e2e/ui-audit.spec.ts` (11) and
 `e2e/a11y.spec.ts` (4) then drive **real Chromium, Firefox and WebKit**
-(17 tests × 3 projects = 51) through the money path: UI registration (form →
+(18 tests × 3 projects = 54) through the money path: UI registration (form →
 token in localStorage) → catalog browse → product page → color +
 add-to-cart (server cart sync observed) → cart page → delivery form →
 **COD** / **Card** order → `/orders` redirect → the persisted order verified

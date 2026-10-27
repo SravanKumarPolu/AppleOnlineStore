@@ -37,6 +37,12 @@ The post-fix execution — 43 backend suites / 441 tests, 24 storefront files /
 125 tests, 13 admin files / 70 tests, 17 browser E2E tests × Chromium/Firefox/
 WebKit (51/51), plus the corrected load artifact — is recorded in
 [docs/10-FINAL-STABILIZATION-REPORT.md](docs/10-FINAL-STABILIZATION-REPORT.md).
+On 2026-10-27 the full gate was re-executed after the customer-auth
+hardening (password-recovery modal a11y + failure feedback, login email
+normalization, admin-login hardening): backend 43 suites / 449 tests,
+storefront 25 files / 142 tests, admin 13 files / 71 tests, E2E 18 tests ×
+3 engines (54/54) — evidence in docs/testing/2026-10-27-*.md; the newer
+counts win for gate expectations.
 Read both before planning DevOps Phase 01; where they differ, `docs/10` wins
 because it was executed after the fixes.
 
@@ -68,9 +74,9 @@ cd backend && npm run security:dangling      # unreachable git objects; exits 1 
 cd backend && npm run security:distribution  # archive policy: no .env/keys/logs (git-archive ZIPs only after this passes)
 cd backend && npm run security:rotation -- --exposed-blob <sha>   # per provider: current works / exposed revoked
 cd backend && npm run verify:old-credentials -- --exposed-blob <sha>  # old admin password + old JWT secret must both be 401
-cd frontend && npm run lint && npm run type-check && npm run test -- --run   # 24 files / 125 tests (vitest 5)
+cd frontend && npm run lint && npm run type-check && npm run test -- --run   # 25 files / 142 tests (vitest 5)
 cd frontend && npm run build          # PWA build
-cd frontend && npm run test:e2e       # real-browser E2E (Playwright, 3 spec files / 17 tests × 3 engines = 51: COD + Card + UI audit + a11y)
+cd frontend && npm run test:e2e       # real-browser E2E (Playwright, 3 spec files / 18 tests × 3 engines = 54: COD + Card + UI audit + password recovery + a11y)
 cd admin && npm run test -- --run     # 13 files / 70 tests (vitest 5)
 cd admin && npm run lint && npm run type-check && npm run build
 
@@ -316,7 +322,7 @@ When a history file contradicts `docs/`, **`docs/` wins.**
 
 1. **Regression gate before any merge:** `cd backend && npm run
    test:security` + frontend lint/type-check/test/build + admin
-   lint/type-check/test/build (admin gate: 13 files / 70 tests; the shipped
+   lint/type-check/test/build (admin gate: 13 files / 71 tests; the shipped
    admin surface is fully covered). Baseline evidence and numbers:
    [docs/devops/00-PRE-DEVOPS-QUALITY-BASELINE.md](docs/devops/00-PRE-DEVOPS-QUALITY-BASELINE.md).
 2. **Webhook changes are high-risk**: extend the state-machine specs

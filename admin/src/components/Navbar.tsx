@@ -18,7 +18,7 @@ const Navbar: React.FC<NavbarProps> = ({ setToken }) => {
             />
             <div className="hidden sm:block">
               <h2 className="text-heading-4 font-bold text-neutral-900 gradient-text mb-1">
-                E-commerce Admin
+               Nova Cart Admin
               </h2>
               <p className="text-caption text-neutral-500 font-semibold tracking-wide">
                 Management Dashboard

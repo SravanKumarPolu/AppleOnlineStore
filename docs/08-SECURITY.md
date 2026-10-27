@@ -1,6 +1,6 @@
 # NovaCart — Security Documentation (As-Built)
 
-> **Status:** Current as of 2026-10-24. The authoritative Phase 1 security
+> **Status:** Current as of 2026-10-27. The authoritative Phase 1 security
 > record with full evidence is
 > [docs/devops/02-SECURITY-BASELINE.md](./devops/02-SECURITY-BASELINE.md) —
 > this file summarizes it, updates statuses, and adds the whole-repository
@@ -16,7 +16,10 @@
   `isActive`-checked on every guarded request. Account lockout: 5 failed
   logins → 2 h lock (HTTP 423).
 - **Admin:** env-credential login (`ADMIN_EMAIL`/`ADMIN_PASSWORD`) → 1-day
-  JWT `{email, role:'admin', type:'admin'}`; or a DB user with
+  JWT `{email, role:'admin', type:'admin'}`. Admin email comparison trims
+  surrounding whitespace and ignores case; password comparison remains exact.
+  Rotating `ADMIN_PASSWORD` alone does not revoke issued admin JWTs; rotate
+  `JWT_SECRET` to invalidate them. A DB user with
   `role:'admin'` (accepted by both middleware stacks).
 - **Token transport:** custom `token` header (storefront) or
   `Authorization: Bearer` (admin analytics pages) — both accepted by both

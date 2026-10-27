@@ -3,6 +3,7 @@
 // submission, inline validation, and the auth-hook contract.
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { toast } from 'react-toastify';
 import Login from '../../pages/Login';
 import { renderWithProviders, createMockContextValue } from '../../test/helpers';
 import type { ShopContextType } from '../../types';
@@ -156,5 +157,61 @@ describe('Login page — remembered email behaviour', () => {
     await waitFor(() =>
       expect(localStorage.getItem('rememberedEmail')).toBe('remember@example.com')
     );
+  });
+
+  it('remembers the normalized email when Remember Me is checked with padded input', async () => {
+    const { loginUser } = renderLogin();
+    fireEvent.change(screen.getByLabelText(/email address/i), {
+      target: { value: '  Remember@Example.COM ' },
+    });
+    fireEvent.change(screen.getByLabelText(/^password$/i), { target: { value: 'Str0ng!Pass' } });
+    fireEvent.click(screen.getByLabelText(/remember me/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Sign In$/ }));
+
+    await waitFor(() => expect(loginUser).toHaveBeenCalledWith('remember@example.com', 'Str0ng!Pass'));
+    await waitFor(() =>
+      expect(localStorage.getItem('rememberedEmail')).toBe('remember@example.com')
+    );
+  });
+});
+
+describe('Login page — email normalization and unavailable sign-in options', () => {
+  it('normalizes the email (trim + lowercase) before sign-in', async () => {
+    const { loginUser } = renderLogin();
+    fireEvent.change(screen.getByLabelText(/email address/i), {
+      target: { value: '  Shopper@Example.COM ' },
+    });
+    fireEvent.change(screen.getByLabelText(/^password$/i), { target: { value: 'Str0ng!Pass' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Sign In$/ }));
+
+    // Registration stores a lowercased email; the backend login is an
+    // exact-case findOne, so the submitted value must be normalized.
+    await waitFor(() =>
+      expect(loginUser).toHaveBeenCalledWith('shopper@example.com', 'Str0ng!Pass')
+    );
+  });
+
+  it('submits a legacy-length password in Login mode (no client-side minimum blocks it)', async () => {
+    const { loginUser } = renderLogin();
+    fireEvent.change(screen.getByLabelText(/email address/i), {
+      target: { value: 'legacy@example.com' },
+    });
+    fireEvent.change(screen.getByLabelText(/^password$/i), { target: { value: 'old6!' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Sign In$/ }));
+
+    // The minLength=8 attribute is signup-only: the server authenticates
+    // migrated accounts with pre-policy passwords regardless of length.
+    await waitFor(() => expect(loginUser).toHaveBeenCalledWith('legacy@example.com', 'old6!'));
+  });
+
+  it('announces unconfigured Google/Facebook/biometric sign-in instead of failing silently', () => {
+    renderLogin();
+    fireEvent.click(screen.getByRole('button', { name: /continue with google/i }));
+    fireEvent.click(screen.getByRole('button', { name: /continue with facebook/i }));
+    fireEvent.click(screen.getByRole('button', { name: /sign in with biometrics/i }));
+
+    expect(toast.info).toHaveBeenCalledWith(expect.stringMatching(/google/i));
+    expect(toast.info).toHaveBeenCalledWith(expect.stringMatching(/facebook/i));
+    expect(toast.info).toHaveBeenCalledWith(expect.stringMatching(/biometric/i));
   });
 });
