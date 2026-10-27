@@ -3,6 +3,21 @@ import path from 'path';
 import { promises as fs } from 'fs';
 import { fileURLToPath } from 'url';
 
+const getSmtpFailureCategory = (error) => {
+  if (error?.code === 'EMAIL_TRANSPORT_UNAVAILABLE') return 'configuration unavailable';
+  if (error?.code === 'EAUTH' || [534, 535].includes(Number(error?.responseCode))) {
+    return 'authentication rejected';
+  }
+  if (
+    ['ENOTFOUND', 'ECONNREFUSED', 'ETIMEDOUT', 'ECONNECTION', 'EHOSTUNREACH', 'ENETUNREACH', 'ESOCKET'].includes(
+      error?.code
+    )
+  ) {
+    return 'network connection failed';
+  }
+  return 'SMTP operation failed';
+};
+
 // Get __dirname equivalent for ES6 modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -11,19 +26,31 @@ class EmailService {
   constructor() {
     this.transporter = null;
     this.templates = {};
-    this.initializeTransporter();
-    this.loadTemplates();
+    this.transportReady = this.initializeTransporter();
+    this.templatesReady = this.loadTemplates();
   }
 
   async initializeTransporter() {
     try {
+      const host = process.env.SMTP_HOST?.trim();
+      const user = process.env.SMTP_USER?.trim();
+      const pass = process.env.SMTP_PASS;
+      const configuredPort = process.env.SMTP_PORT?.trim();
+      const port = configuredPort ? Number(configuredPort) : 587;
+
+      if (!host || !user || !pass?.trim() || !Number.isInteger(port) || port < 1 || port > 65535) {
+        this.transporter = null;
+        console.error('❌ Email service initialization failed: SMTP configuration is missing or invalid');
+        return false;
+      }
+
       const config = {
-        host: process.env.SMTP_HOST,
-        port: parseInt(process.env.SMTP_PORT) || 587,
+        host,
+        port,
         secure: process.env.SMTP_SECURE === 'true',
         auth: {
-          user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASS
+          user,
+          pass
         },
         tls: {
           // Certificate validation is ON by default. Operators with a
@@ -32,14 +59,15 @@ class EmailService {
         }
       };
 
-      this.transporter = nodemailer.createTransport(config);
-
-      // Verify connection
-      await this.transporter.verify();
+      const transporter = nodemailer.createTransport(config);
+      await transporter.verify();
+      this.transporter = transporter;
       console.log('✅ Email service initialized successfully');
+      return true;
     } catch (error) {
-      console.error('❌ Email service initialization failed:', error.message);
+      console.error(`❌ Email service initialization failed: ${getSmtpFailureCategory(error)}`);
       this.transporter = null;
+      return false;
     }
   }
 
@@ -240,10 +268,6 @@ class EmailService {
   }
 
   async sendEmail(options) {
-    if (!this.transporter) {
-      throw new Error('Email service not initialized');
-    }
-
     const {
       to,
       subject,
@@ -255,6 +279,13 @@ class EmailService {
     } = options;
 
     try {
+      await Promise.all([this.transportReady, this.templatesReady]);
+      if (!this.transporter) {
+        const error = new Error('Email transport is unavailable');
+        error.code = 'EMAIL_TRANSPORT_UNAVAILABLE';
+        throw error;
+      }
+
       // Get template content
       const templateContent = this.templates[template];
       if (!templateContent) {
@@ -278,21 +309,19 @@ class EmailService {
       };
 
       const result = await this.transporter.sendMail(mailOptions);
-      console.log(`✅ Email sent successfully to ${to}`);
+      console.log('✅ Email accepted by SMTP');
       return result;
     } catch (error) {
-      console.error('❌ Failed to send email:', error.message);
+      console.error(`❌ Failed to send email: ${getSmtpFailureCategory(error)}`);
       throw error;
     }
   }
 
   async sendPasswordResetEmail(email, name, resetToken) {
-    // FRONTEND_URL must be set in production; the localhost fallback matches
-    // the one used for the PayPal return/cancel URLs in orderController and
-    // keeps dev links well-formed instead of "undefined/reset-password?..."
-    // (K-4 fix).
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-    const resetLink = `${frontendUrl}/reset-password?token=${resetToken}`;
+    const resetUrl = new URL('/reset-password', frontendUrl);
+    resetUrl.searchParams.set('token', resetToken);
+    const resetLink = resetUrl.toString();
     
     return this.sendEmail({
       to: email,

@@ -50,7 +50,7 @@
 | 1 | `POST /register` | public | `registerUser` | Body `{name, email, password}`. Validates email + password strength; bcrypt(12). 201 → `{success, token, user:{id,name,email,role}}`. Welcome email async. 400 if email taken / invalid |
 | 2 | `POST /login` | public | `loginUser` | Body `{email, password}`. 200 + token; 401 invalid; **423 if locked** (5 fails → 2 h); stamps `lastLogin`, resets attempts |
 | 3 | `POST /admin` | public | `adminLogin` | Body `{email, password}` compared to `ADMIN_EMAIL`/`ADMIN_PASSWORD` env (plaintext compare — known limitation S3). 200 → 1-day admin token `{user:{email, role:'admin'}}`; 401 otherwise; 500 if admin env unset |
-| 4 | `POST /forgot-password` | public | `requestPasswordReset` | Body `{email}`. Always the same neutral 200 message. Emails a 1-hour reset token (hash stored). Email rendering fixed 2026-10-24 (K-4): `(email, name, resetToken)` call contract + `FRONTEND_URL`-based link, guarded by `passwordResetEmail.spec.js` |
+| 4 | `POST /forgot-password` | public | `requestPasswordReset` | Body `{email}`. Always the same neutral 202 response for unknown, inactive, and active accounts. Stores a 1-hour hashed token; clears it when SMTP handoff fails. Response/UI do not claim inbox delivery. SMTP transport is verified before send; link uses the configured frontend origin. |
 | 5 | `POST /reset-password` | public | `resetPassword` | Body `{token, newPassword}`. Hashes token, matches with expiry; validates strength; 200 on success; 400 invalid/expired |
 | 6 | `GET /profile` | `authUser` | `getUserProfile` | 200 `{user:{id,name,email,role,createdAt,lastLogin}}`; 404 |
 | 7 | `PUT /profile` | `authUser` | `updateUserProfile` | Body `{name?, email?}`; email uniqueness checked; 200 updated user |

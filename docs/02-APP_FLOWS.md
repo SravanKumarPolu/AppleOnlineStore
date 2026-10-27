@@ -49,16 +49,17 @@ Flow notation: `storefront` = `frontend/`, `admin` = `admin/`, `API` =
 
 ### 1.4 Password recovery — ✅ Implemented (K-4 fixed 2026-10-24)
 
-1. `PasswordRecovery.tsx` → `POST /api/user/forgot-password` — always answers
-   the same neutral message whether or not the email exists.
+1. `PasswordRecovery.tsx` → `POST /api/user/forgot-password` — returns the
+   same neutral HTTP 202 response for unknown, inactive, and active accounts;
+   the UI says a reset link will be attempted, not that it was delivered.
 2. Backend creates a 32-byte random token, stores only its SHA-256 hash with
    a 1-hour expiry, then calls the email service.
 3. The controller calls `sendPasswordResetEmail(email, user.name, resetToken)`
-   and the service renders the greeting by name plus a working
-   `FRONTEND_URL`-based reset link (the old argument-order bug — token in the
-   greeting, malformed link — was fixed 2026-10-24; guarded by
-   `passwordResetEmail.spec.js`). The DB side (hashing, expiry, consumption
-   in `POST /api/user/reset-password`) was always correct.
+   and clears the pending token if the SMTP handoff fails. The service waits
+   for verified SMTP and loaded templates, and builds the reset URL with the
+   `FRONTEND_URL` origin. SMTP acceptance does not prove inbox delivery.
+   The DB side hashes and expires the token; password consumption increments
+   `tokenVersion` to invalidate existing sessions.
 
 ### 1.5 Cart — ✅ Implemented
 

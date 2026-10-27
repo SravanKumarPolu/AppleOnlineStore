@@ -84,10 +84,10 @@ const Login = () => {
 
       const data = await response.json();
 
-      if (data.success) {
+      if (response.ok && data.success) {
         return true;
       } else {
-        console.error('Password recovery failed:', data.message);
+        console.error('Password recovery failed:', response.status, data.message);
         return false;
       }
     } catch (error) {

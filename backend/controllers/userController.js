@@ -162,6 +162,7 @@ const registerUser = async (req, res, next) => {
 const requestPasswordReset = async (req, res, next) => {
   try {
     const { email } = req.body;
+    const responseMessage = "If an account exists for this email, we'll attempt to send a reset link.";
 
     if (!email || !validator.isEmail(email)) {
       return res.status(400).json({
@@ -175,9 +176,9 @@ const requestPasswordReset = async (req, res, next) => {
     
     if (!user) {
       // Don't reveal if user exists or not for security
-      return res.json({
+      return res.status(202).json({
         success: true,
-        message: "If an account with that email exists, a password reset link has been sent."
+        message: responseMessage
       });
     }
 
@@ -190,22 +191,24 @@ const requestPasswordReset = async (req, res, next) => {
     // FRONTEND_URL + token — the raw token must go in the third argument,
     // NOT in the name slot (previously the token landed in the greeting and
     // the reset link was malformed).
-    const emailSent = await emailService.sendPasswordResetEmail(email, user.name, resetToken);
-
-    if (emailSent) {
-      res.json({
-        success: true,
-        message: "If an account with that email exists, a password reset link has been sent."
-      });
-    } else {
-      // Clear the token if email failed to send
+    try {
+      const emailAccepted = await emailService.sendPasswordResetEmail(email, user.name, resetToken);
+      if (!emailAccepted) {
+        await user.clearPasswordResetToken();
+        console.error('Password reset email was not accepted by SMTP');
+      }
+    } catch {
+      // Do not leave a usable token behind when its email could not be handed off.
       await user.clearPasswordResetToken();
-      
-      res.status(500).json({
-        success: false,
-        message: "Failed to send password reset email. Please try again later."
-      });
+      console.error('Password reset email handoff failed');
     }
+
+    // Keep status and body identical for unknown, inactive, and existing
+    // accounts; SMTP acceptance is not proof of inbox delivery.
+    res.status(202).json({
+      success: true,
+      message: responseMessage
+    });
 
   } catch (error) {
     console.error('Password reset request error:', error);

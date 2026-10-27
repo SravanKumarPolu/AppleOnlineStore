@@ -36,6 +36,15 @@ afterAll(async () => {
 
 describe('POST /api/user/reset-password — token consumption', () => {
   it('accepts a valid token, swaps the password, and clears the token', async () => {
+    const login = await request(app)
+      .post('/api/user/login')
+      .send({ email: user.email, password: 'TestPassword123!' });
+    expect(login.status).toBe(200);
+    const existingSession = await request(app)
+      .get('/api/user/profile')
+      .set('Authorization', `Bearer ${login.body.token}`);
+    expect(existingSession.status).toBe(200);
+
     const rawToken = user.createPasswordResetToken();
     await user.save();
 
@@ -56,6 +65,11 @@ describe('POST /api/user/reset-password — token consumption', () => {
     // Single-use: the stored token/expiry are cleared.
     expect(saved.passwordResetToken).toBeFalsy();
     expect(saved.passwordResetExpires).toBeFalsy();
+
+    const staleSession = await request(app)
+      .get('/api/user/profile')
+      .set('Authorization', `Bearer ${login.body.token}`);
+    expect(staleSession.status).toBe(401);
   });
 
   it('lets the user log in with the new password afterwards', async () => {

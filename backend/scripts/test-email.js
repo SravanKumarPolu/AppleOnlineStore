@@ -15,14 +15,12 @@
 import 'dotenv/config';
 import emailService from '../services/emailService.js';
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
 async function main() {
-  // The service initializes its transporter asynchronously in the
-  // constructor; give it a moment before verifying.
-  await sleep(500);
-
-  const hasSmtp = Boolean(process.env.SMTP_HOST && process.env.SMTP_USER);
+  const hasSmtp = Boolean(
+    process.env.SMTP_HOST?.trim() &&
+      process.env.SMTP_USER?.trim() &&
+      process.env.SMTP_PASS?.trim()
+  );
   if (!hasSmtp) {
     console.error(
       '❌ SMTP is not configured. Set SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS in backend/.env first.'
@@ -31,18 +29,13 @@ async function main() {
     process.exit(1);
   }
 
-  if (!emailService.transporter) {
-    console.error('❌ Email service failed to initialize (see errors above).');
+  const transportVerified = await emailService.transportReady;
+  if (!transportVerified || !emailService.transporter) {
+    console.error('❌ SMTP connection/authentication could not be verified (see categorized service status above).');
     process.exit(1);
   }
 
-  try {
-    await emailService.transporter.verify();
-    console.log('✅ SMTP connection verified:', process.env.SMTP_HOST, 'port', process.env.SMTP_PORT || 587);
-  } catch (error) {
-    console.error('❌ SMTP verification failed:', error.message);
-    process.exit(1);
-  }
+  console.log('✅ SMTP connection and authentication verified');
 
   const to = process.env.TEST_EMAIL_TO;
   if (to) {
@@ -53,19 +46,19 @@ async function main() {
         template: 'welcome',
         variables: { name: 'Operator' },
       });
-      console.log(`✅ Test email sent to ${to} using the real 'welcome' template.`);
-    } catch (error) {
-      console.error(`❌ Failed to send test email to ${to}:`, error.message);
+      console.log("✅ Test email accepted by SMTP using the real 'welcome' template.");
+    } catch {
+      console.error('❌ Test email could not be handed off to SMTP.');
       process.exit(1);
     }
   } else {
-    console.log('ℹ️  SMTP verified. Set TEST_EMAIL_TO=<address> to also send a test email.');
+    console.log('ℹ️  SMTP verified. No email was sent because TEST_EMAIL_TO is unset.');
   }
 
   process.exit(0);
 }
 
-main().catch((error) => {
-  console.error('❌ Unexpected error:', error.message);
+main().catch(() => {
+  console.error('❌ SMTP diagnostic failed (details suppressed).');
   process.exit(1);
 });

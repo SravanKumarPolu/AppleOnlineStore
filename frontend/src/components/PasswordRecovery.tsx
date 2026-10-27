@@ -127,8 +127,8 @@ const PasswordRecovery = ({ isOpen, onClose, onRecoveryRequest, initialEmail = '
             </div>
             <h3 className="text-lg font-semibold text-gray-900 mb-2">Request Sent</h3>
             <p className="text-gray-600">
-              If an account exists for this email address, a password reset link is on its way.
-              Please check your inbox and spam folder.
+              If an account exists for this email address, we'll attempt to send a reset link.
+              Check your inbox and spam folder; email delivery is not guaranteed.
             </p>
           </div>
         ) : (

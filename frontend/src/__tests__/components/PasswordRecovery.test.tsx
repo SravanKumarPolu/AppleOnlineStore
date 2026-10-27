@@ -50,6 +50,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('PasswordRecovery — dialog semantics and focus management', () => {
@@ -105,6 +106,51 @@ describe('PasswordRecovery — dialog semantics and focus management', () => {
 });
 
 describe('PasswordRecovery — submission and feedback', () => {
+  it('POSTs the entered email to the customer forgot-password route and accepts 202', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+      json: async () => ({ success: true }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(<Login />, { contextValue: createMockContextValue() });
+
+    fireEvent.click(screen.getByRole('button', { name: /forgot password/i }));
+    const dialog = screen.getByRole('dialog', { name: 'Reset Password' });
+    fireEvent.change(within(dialog).getByLabelText(/email address/i), {
+      target: { value: 'Shopper@Example.com' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /send reset link/i }));
+
+    expect(await screen.findByText(/we'll attempt to send a reset link/i)).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringMatching(/\/api\/user\/forgot-password$/),
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ email: 'shopper@example.com' }),
+      }),
+    );
+  });
+
+  it('does not treat a success-shaped non-2xx response as an accepted request', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: async () => ({ success: true }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(<Login />, { contextValue: createMockContextValue() });
+
+    fireEvent.click(screen.getByRole('button', { name: /forgot password/i }));
+    const dialog = screen.getByRole('dialog', { name: 'Reset Password' });
+    fireEvent.change(within(dialog).getByLabelText(/email address/i), {
+      target: { value: 'shopper@example.com' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /send reset link/i }));
+
+    expect(await screen.findByText(/couldn't send the reset link/i)).toBeInTheDocument();
+  });
+
   it('sends the typed email through the recovery handler and confirms safely', async () => {
     const { onRecoveryRequest } = renderModal();
 
