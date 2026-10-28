@@ -1,6 +1,9 @@
-import React, { useCallback, useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useShopContext } from '../context/shop-context';
+import { useRealtimeEvent } from '../hooks/useWebSocket';
+import { backendUrl } from '../config/backend';
+import type { RealtimeOrderPayload } from '../types';
 import Title from '../components/Title';
 import { toast } from 'react-toastify';
 
@@ -38,6 +41,11 @@ interface Order {
   paypalOrderId?: string;
   paypalCaptureId?: string;
   paypalTransactionId?: string;
+  refundStatus?: string | null;
+  refundReason?: string | null;
+  trackingNumber?: string;
+  estimatedDelivery?: string;
+  deliveredAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -46,7 +54,7 @@ const Orders: React.FC = () => {
   // `navigate` comes from react-router directly (stable identity) instead of
   // the context wrapper, so the fetch effect below does not re-run on every
   // provider render — avoiding redundant order requests.
-  const { token, isLoggedIn, currency } = useShopContext();
+  const { token, isLoggedIn, currency, webSocket } = useShopContext();
   const navigate = useNavigate();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -54,37 +62,47 @@ const Orders: React.FC = () => {
   const [totalPages, setTotalPages] = useState(1);
   const [selectedStatus, setSelectedStatus] = useState<string>('');
 
-  const fetchOrders = useCallback(async () => {
-    try {
-      setLoading(true);
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'}/api/orders/userorders`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'token': token,
-        },
-        body: JSON.stringify({
-          page: currentPage,
-          limit: 10,
-          status: selectedStatus || undefined
-        }),
-      });
+  // Latest list without re-subscribing the socket on every render.
+  const ordersRef = useRef<Order[]>(orders);
+  useEffect(() => {
+    ordersRef.current = orders;
+  }, [orders]);
 
-      const data = await response.json();
+  const fetchOrders = useCallback(
+    async ({ silent = false }: { silent?: boolean } = {}) => {
+      try {
+        // A background refresh must not unmount the list behind a spinner.
+        if (!silent) setLoading(true);
+        const response = await fetch(`${backendUrl}/api/orders/userorders`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'token': token,
+          },
+          body: JSON.stringify({
+            page: currentPage,
+            limit: 10,
+            status: selectedStatus || undefined
+          }),
+        });
 
-      if (data.success) {
-        setOrders(data.orders);
-        setTotalPages(data.pagination.totalPages);
-      } else {
-        toast.error(data.message || 'Failed to fetch orders');
+        const data = await response.json();
+
+        if (data.success) {
+          setOrders(data.orders);
+          setTotalPages(data.pagination.totalPages);
+        } else if (!silent) {
+          toast.error(data.message || 'Failed to fetch orders');
+        }
+      } catch (error) {
+        console.error('Error fetching orders:', error);
+        if (!silent) toast.error('Failed to fetch orders');
+      } finally {
+        if (!silent) setLoading(false);
       }
-    } catch (error) {
-      console.error('Error fetching orders:', error);
-      toast.error('Failed to fetch orders');
-    } finally {
-      setLoading(false);
-    }
-  }, [token, currentPage, selectedStatus]);
+    },
+    [token, currentPage, selectedStatus]
+  );
 
   useEffect(() => {
     if (!isLoggedIn) {
@@ -93,6 +111,82 @@ const Orders: React.FC = () => {
     }
     fetchOrders();
   }, [isLoggedIn, navigate, fetchOrders]);
+
+  // ---------------------------------------------------------------------
+  // Live updates. The server pushes `order_updated` to every tab/device of the
+  // signed-in shopper (personal room), so the list re-renders in place instead
+  // of polling. A refetch only happens when an order that is NOT in the current
+  // list was created and this view is the unfiltered first page — debounced, so
+  // a burst of events triggers a single request.
+  // ---------------------------------------------------------------------
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const scheduleSilentRefresh = useCallback(() => {
+    if (refreshTimer.current) return;
+    refreshTimer.current = setTimeout(() => {
+      refreshTimer.current = null;
+      fetchOrders({ silent: true });
+    }, 500);
+  }, [fetchOrders]);
+
+  useEffect(
+    () => () => {
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    },
+    []
+  );
+
+  const applyRealtimeUpdate = useCallback(
+    (payload: RealtimeOrderPayload) => {
+      const id = String(payload?._id ?? '');
+      if (!id) return;
+
+      const currentOrder = ordersRef.current.find((order) => order._id === id);
+      if (!currentOrder) {
+        // An update to an off-page order can change filtered results,
+        // pagination, or list ordering. Debouncing collapses bursts.
+        scheduleSilentRefresh();
+        return;
+      }
+
+      const nextOrderStatus =
+        (payload.orderStatus as Order['orderStatus']) ?? currentOrder.orderStatus;
+      if (selectedStatus && nextOrderStatus !== selectedStatus) {
+        setOrders((previous) => previous.filter((order) => order._id !== id));
+        scheduleSilentRefresh();
+        return;
+      }
+
+      setOrders((previous) => {
+        let changed = false;
+        const next = previous.map((order) => {
+          if (order._id !== id) return order;
+          const merged: Order = {
+            ...order,
+            orderStatus: nextOrderStatus ?? order.orderStatus,
+            paymentStatus:
+              (payload.paymentStatus as Order['paymentStatus']) ?? order.paymentStatus,
+            refundStatus: payload.refundStatus ?? order.refundStatus,
+            updatedAt: payload.updatedAt ?? order.updatedAt,
+          };
+          // Keep the previous identity when nothing visible changed, so a
+          // repeated event cannot cause a pointless re-render.
+          const isSame =
+            merged.orderStatus === order.orderStatus &&
+            merged.paymentStatus === order.paymentStatus &&
+            merged.refundStatus === order.refundStatus &&
+            merged.updatedAt === order.updatedAt;
+          if (isSame) return order;
+          changed = true;
+          return merged;
+        });
+        return changed ? next : previous;
+      });
+    },
+    [selectedStatus, scheduleSilentRefresh]
+  );
+
+  useRealtimeEvent(webSocket.socket, 'order_updated', applyRealtimeUpdate);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -146,6 +240,29 @@ const Orders: React.FC = () => {
     <div className="min-h-screen bg-gray-50 pt-14">
       <div className="max-w-6xl mx-auto p-4 md:p-8">
         <Title text1="My" text2="Orders" />
+
+        {/* Realtime status: a shopper must be able to tell a live list from a
+            stale one (a paused feed is not an error, but silent staleness is). */}
+        <p
+          role="status"
+          aria-live="polite"
+          className={`mb-4 inline-flex items-center gap-2 text-sm ${webSocket.isConnected ? 'text-green-700' : 'text-gray-500'}`}
+        >
+          <span
+            aria-hidden="true"
+            className={`inline-block h-2 w-2 rounded-full ${webSocket.isConnected ? 'bg-green-500' : 'bg-gray-400'}`}
+          />
+          {webSocket.isConnected ? 'Live updates on' : 'Live updates paused'}
+          {!webSocket.isConnected && !webSocket.authError && (
+            <button
+              type="button"
+              onClick={webSocket.reconnect}
+              className="ml-2 underline underline-offset-2"
+            >
+              Reconnect
+            </button>
+          )}
+        </p>
         
         {/* Filter Section */}
         <div className="mb-6 bg-white rounded-lg shadow p-4">
@@ -204,6 +321,11 @@ const Orders: React.FC = () => {
                       <span className={`px-3 py-1 rounded-full text-xs font-medium ${getPaymentStatusColor(order.paymentStatus)}`}>
                         {order.paymentStatus.charAt(0).toUpperCase() + order.paymentStatus.slice(1)}
                       </span>
+                      {order.refundStatus === 'pending' && (
+                        <span className="px-3 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                          Refund processing
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>

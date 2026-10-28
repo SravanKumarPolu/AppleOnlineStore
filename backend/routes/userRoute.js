@@ -1,6 +1,8 @@
 import express from 'express';
 import { 
   adminLogin, 
+  logoutUser,
+  logoutAdmin,
   loginUser, 
   registerUser, 
   requestPasswordReset,
@@ -24,6 +26,8 @@ const userRouter = express.Router();
 userRouter.post('/register', validateUserRegistration, registerUser);
 userRouter.post('/login', validateUserLogin, loginUser);
 userRouter.post('/admin', validateAdminLogin, adminLogin);
+userRouter.post('/logout', authUser, logoutUser);
+userRouter.post('/admin/logout', authAdmin, logoutAdmin);
 
 // Password recovery routes (public)
 userRouter.post('/forgot-password', requestPasswordReset);

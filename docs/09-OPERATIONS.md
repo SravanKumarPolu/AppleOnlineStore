@@ -61,8 +61,8 @@ connected-user count.
 - One process, one port; handshake is JWT-authenticated (bad token →
   connection refused).
 - Rooms: `user_<id>`, `admin_room`, `order_<id>`. Server→client events:
-  `order_updated` (+ `payment_update`/`shipping_update` variants),
-  `new_order`, `user_typing`/`user_stop_typing`.
+  minimal `order_updated` (+ `payment_update` discriminator), `new_order`,
+  `session_revoked`, `user_typing`/`user_stop_typing`.
 - **Order rooms are private.** A shopper socket may join `order_<id>` only after
   the server verifies the order belongs to that account; admins join by role.
   Typing relays require a joined room. An ObjectId is not a secret — never

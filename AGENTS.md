@@ -15,7 +15,7 @@
 | [docs/02-APP_FLOWS.md](docs/02-APP_FLOWS.md) | Shopper/admin/system flows as traced through source |
 | [docs/03-TECH_ARCHITECTURE.md](docs/03-TECH_ARCHITECTURE.md) | Stacks, module map, cross-cutting decisions, **dead-code map** |
 | [docs/04-DATABASE_SCHEMA.md](docs/04-DATABASE_SCHEMA.md) | 11 MongoDB collections, fields, indexes, references |
-| [docs/05-API_REFERENCE.md](docs/05-API_REFERENCE.md) | 45 + 5 endpoints, conventions, Socket.IO events |
+| [docs/05-API_REFERENCE.md](docs/05-API_REFERENCE.md) | 47 + 5 endpoints, conventions, Socket.IO events |
 | [docs/06-DEPLOYMENT.md](docs/06-DEPLOYMENT.md) | CURRENT (manual) vs PLANNED (roadmap); real env vars; PayPal setup |
 | [docs/07-TESTING_PLAN.md](docs/07-TESTING_PLAN.md) | Test inventory, **command truth table**, traceability matrix, gaps |
 | [docs/08-SECURITY.md](docs/08-SECURITY.md) | Auth model, fixed vulns, risk register S1–S7, secrets rules |

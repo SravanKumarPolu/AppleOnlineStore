@@ -10,8 +10,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { PayPalScriptProvider } from '@paypal/react-paypal-js';
 import type { SavedAddress } from "../types";
 import { toPayPalErrorLike } from "../utils/errorUtils";
+import { backendUrl } from '../config/backend';
 
-const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
 
 const paymentMethods = [
   { key: "paypal", label: "PayPal", icon: assets.paypal_logo },

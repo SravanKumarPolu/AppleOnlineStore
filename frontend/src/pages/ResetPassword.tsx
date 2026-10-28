@@ -2,6 +2,7 @@ import { FormEvent, useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "react-toastify";
 import { useShopContext } from "../context/shop-context";
+import { backendUrl } from '../config/backend';
 
 const ResetPassword = () => {
   const [searchParams] = useSearchParams();
@@ -69,7 +70,7 @@ const ResetPassword = () => {
         return;
       }
 
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'}/api/user/reset-password`, {
+      const response = await fetch(`${backendUrl}/api/user/reset-password`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

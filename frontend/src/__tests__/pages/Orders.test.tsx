@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, fireEvent, waitFor } from '@testing-library/react';
+import { screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { toast } from 'react-toastify';
 import Orders from '../../pages/Orders';
 import { createMockContextValue, renderWithProviders } from '../../test/helpers';
@@ -165,5 +165,189 @@ describe('Orders page (order history)', () => {
 
     expect(navigateSpy).toHaveBeenCalledWith('/login');
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Live updates (Socket.IO). The page must reflect a staff status/payment change
+// without a refresh AND without polling: an event for an order already on the
+// page patches it in place, an event for an unknown order refetches once
+// (debounced), and repeated identical events cause no work at all.
+// ---------------------------------------------------------------------------
+describe('Orders page (live updates)', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+  let socket: { on: ReturnType<typeof vi.fn>; off: ReturnType<typeof vi.fn>; emit: ReturnType<typeof vi.fn>; trigger: (event: string, payload?: unknown) => void };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fetchMock = vi.fn(() =>
+      jsonResponse({
+        success: true,
+        orders: [order],
+        pagination: { currentPage: 1, totalPages: 2, totalOrders: 2 },
+      })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const listeners = new Map<string, Set<(payload?: unknown) => void>>();
+    socket = {
+      on: vi.fn((event: string, handler: (payload?: unknown) => void) => {
+        if (!listeners.has(event)) listeners.set(event, new Set());
+        listeners.get(event)!.add(handler);
+      }),
+      off: vi.fn((event: string, handler: (payload?: unknown) => void) => {
+        listeners.get(event)?.delete(handler);
+      }),
+      emit: vi.fn(),
+      trigger: (event: string, payload?: unknown) => {
+        for (const handler of [...(listeners.get(event) ?? [])]) handler(payload);
+      },
+    };
+  });
+
+  const renderLive = (contextOverrides = {}) =>
+    renderWithProviders(<Orders />, {
+      contextValue: createMockContextValue({
+        isLoggedIn: true,
+        token: 'shopper-token',
+        currency: '$',
+        webSocket: {
+          isConnected: true,
+          connectionError: null,
+          authError: null,
+          connect: vi.fn(() => null),
+          disconnect: vi.fn(),
+          reconnect: vi.fn(() => null),
+          joinOrderRoom: vi.fn(),
+          leaveOrderRoom: vi.fn(),
+          sendTyping: vi.fn(),
+          sendStopTyping: vi.fn(),
+          socket: socket as never,
+        },
+        ...contextOverrides,
+      }),
+    });
+
+  it('shows whether the feed is live', async () => {
+    renderLive();
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Live updates on');
+  });
+
+  it('patches an order status in place without refetching', async () => {
+    renderLive();
+    await screen.findByText('Order #88776655');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      socket.trigger('order_updated', {
+        _id: order._id,
+        eventId: 'evt-1',
+        type: 'order_updated',
+        orderStatus: 'Shipped',
+        paymentStatus: 'pending',
+      });
+    });
+
+    // The badge flipped (the word also exists as a filter <option>, so assert
+    // on the badge's own text).
+    const badges = await screen.findAllByText('Shipped');
+    expect(badges.some((el) => el.tagName === 'SPAN')).toBe(true);
+    // The point of the feature: no extra HTTP request.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('reflects a payment change and a pending refund', async () => {
+    renderLive();
+    await screen.findByText('Order #88776655');
+
+    act(() => {
+      socket.trigger('order_updated', {
+        _id: order._id,
+        eventId: 'evt-2',
+        type: 'payment_update',
+        orderStatus: 'Order Placed',
+        paymentStatus: 'completed',
+        refundStatus: 'pending',
+      });
+    });
+
+    expect(await screen.findByText('Completed')).toBeInTheDocument();
+    expect(screen.getByText('Refund processing')).toBeInTheDocument();
+  });
+
+  it('ignores an event that repeats the state already rendered', async () => {
+    renderLive();
+    await screen.findByText('Order #88776655');
+
+    act(() => {
+      socket.trigger('order_updated', {
+        _id: order._id,
+        eventId: 'evt-3',
+        type: 'order_updated',
+        orderStatus: 'Order Placed',
+        paymentStatus: 'pending',
+      });
+    });
+
+    // No state change → still one fetch, still the same badge count.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(screen.getAllByText('Order Placed').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('refetches once (debounced) when a new order arrives for the first page', async () => {
+    vi.useFakeTimers();
+    try {
+      renderLive();
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        socket.trigger('order_updated', {
+          _id: '65f1c2d3e4b5a69788770000',
+          eventId: 'evt-4',
+          type: 'order_created',
+          orderStatus: 'Order Placed',
+          paymentStatus: 'pending',
+        });
+        socket.trigger('order_updated', {
+          _id: '65f1c2d3e4b5a69788770001',
+          eventId: 'evt-5',
+          type: 'order_created',
+          orderStatus: 'Order Placed',
+          paymentStatus: 'pending',
+        });
+      });
+
+      await act(async () => {
+        vi.advanceTimersByTime(600);
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('refetches once for an unknown order so filtered pages stay accurate', async () => {
+    renderLive();
+    await screen.findByText('Page 1 of 2');
+
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Shipped' } });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    act(() => {
+      socket.trigger('order_updated', {
+        _id: '65f1c2d3e4b5a69788770000',
+        eventId: 'evt-6',
+        type: 'order_created',
+        orderStatus: 'Order Placed',
+        paymentStatus: 'pending',
+      });
+    });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
   });
 });

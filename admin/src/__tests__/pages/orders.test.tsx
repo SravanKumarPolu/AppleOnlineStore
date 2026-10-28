@@ -223,4 +223,15 @@ describe('Orders (admin panel)', () => {
       screen.getByText('There are no orders matching your filters.')
     ).toBeInTheDocument();
   });
+
+  it('renders the live-feed indicator from the realtime context', async () => {
+    vi.spyOn(axios, 'get').mockResolvedValue({ data: ordersResponse });
+
+    render(<Orders token="admin-token" />);
+
+    await screen.findByText(`Order #${order._id.slice(-8).toUpperCase()}`);
+    // No provider in this test → realtime is disconnected, and the operator is
+    // told so instead of silently trusting a stale table.
+    expect(screen.getByRole('status')).not.toHaveTextContent('Live updates on');
+  });
 });

@@ -137,7 +137,7 @@ environment-based (a known limitation — see [08-SECURITY.md](./08-SECURITY.md)
 |---|---|---|
 | Order placement (PayPal path) | ✅ Implemented | Creates order, clears server cart, pushes to `user.orders`, realtime notifications |
 | Order history page | ✅ Implemented | `Orders.tsx` + `POST /api/orders/userorders` |
-| Realtime order status updates | ✅ Implemented | Socket.IO rooms `user_<id>` / `order_<id>` / `admin_room`; events `order_updated`, `new_order` (variants `payment_update`, `shipping_update`) |
+| Realtime order status updates | ✅ Implemented | Authenticated Socket.IO rooms `user_<id>` / `order_<id>` / `admin_room`; minimal `order_updated` and `new_order` events (payment changes use the `payment_update` discriminator) |
 | Typing indicators in order room | 🟡 Partial | Backend relays `user_typing`/`user_stop_typing`; the frontend WebSocket context only console-logs these events |
 | Order status lifecycle (admin-driven) | ✅ Implemented | 6 statuses: Order Placed → Packing → Shipped → Out for delivery → Delivered (or Cancelled); server-side enum whitelist |
 | Payment status lifecycle | ✅ Implemented | `pending` → `completed` (verified capture/webhook) · `failed` · `refunded`. Refunds are an admin API action with a separate `refundStatus`: `pending` (requested, not confirmed — order stays `completed`) → `completed` (money returned, `paymentStatus:'refunded'`, inventory released) or `failed` (definitive provider rejection, retryable). COD/Card refunds are recorded as `manual`. No customer-facing refund UI |

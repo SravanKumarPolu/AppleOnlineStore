@@ -110,8 +110,8 @@ app.use(compression());
 // ✅ CORS Configuration — Phase 4 audit: the historical SKR Netlify origins
 // were removed from the hardcoded list (nothing in the current frontend/admin
 // references them). Production origins are environment-configured
-// (FRONTEND_URL / ADMIN_URL / CORS_EXTRA_ORIGINS) and local development
-// origins are preserved. The list is shared with the Socket.IO policy via
+// (FRONTEND_URL / ADMIN_URL / CORS_EXTRA_ORIGINS); localhost dev origins are
+// enabled only outside production. The list is shared with the Socket.IO policy via
 // config/allowedOrigins.js so the two can never drift apart again.
 const allowedOrigins = buildAllowedOrigins(process.env);
 

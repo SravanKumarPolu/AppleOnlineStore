@@ -7,19 +7,18 @@ import Navbar from '../../components/Navbar';
 
 describe('Navbar (admin panel)', () => {
   it('renders the management dashboard chrome', () => {
-    render(<Navbar setToken={vi.fn()} />);
+    render(<Navbar onLogout={vi.fn()} />);
 
-    expect(screen.getByText('E-commerce Admin')).toBeInTheDocument();
+    expect(screen.getByText('NovaCart Admin')).toBeInTheDocument();
     expect(screen.getByText('Management Dashboard')).toBeInTheDocument();
     expect(screen.getByText('Admin User')).toBeInTheDocument();
   });
 
-  it('logout clears the token', () => {
-    const setToken = vi.fn();
-    render(<Navbar setToken={setToken} />);
+  it('calls the logout handler', () => {
+    const onLogout = vi.fn();
+    render(<Navbar onLogout={onLogout} />);
 
     fireEvent.click(screen.getByRole('button', { name: /logout/i }));
-    expect(setToken).toHaveBeenCalledWith('');
-    expect(setToken).toHaveBeenCalledTimes(1);
+    expect(onLogout).toHaveBeenCalledTimes(1);
   });
 });

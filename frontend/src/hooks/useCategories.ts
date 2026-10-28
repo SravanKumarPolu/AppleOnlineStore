@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { backendUrl } from '../config/backend';
 
 interface SubCategory {
   _id: string;
@@ -32,7 +33,7 @@ const useCategories = () => {
       setLoading(true);
       setError(null);
       
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL || "http://localhost:3001"}/api/category/list`);
+      const response = await fetch(`${backendUrl}/api/category/list`);
       const data: CategoriesResponse = await response.json();
       
       if (data.success) {

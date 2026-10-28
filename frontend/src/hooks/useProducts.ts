@@ -2,8 +2,8 @@ import { useState, useCallback } from 'react';
 import { toast } from 'react-toastify';
 import { Product, ProductResponse, ProductFilters } from '../types';
 import { getErrorMessage } from '../utils/errorUtils';
+import { backendUrl } from '../config/backend';
 
-const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
 
 export const useProducts = (token: string) => {
   const [products, setProducts] = useState<Product[]>([]);

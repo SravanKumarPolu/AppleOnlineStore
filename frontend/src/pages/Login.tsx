@@ -16,6 +16,7 @@ import {
   FacebookIcon,
   ValidationIcon
 } from "../components/icons";
+import { backendUrl } from '../config/backend';
 
 const Login = () => {
   const [currentState, setCurrentState] = useState<string>("Login");
@@ -74,7 +75,7 @@ const Login = () => {
   // Password recovery handler
   const handlePasswordRecovery = async (recoveryEmail: string): Promise<boolean> => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'}/api/user/forgot-password`, {
+      const response = await fetch(`${backendUrl}/api/user/forgot-password`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

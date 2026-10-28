@@ -139,7 +139,7 @@ export interface ShopContextType {
   setUser: (user: User | null) => void;
   loginUser: (email: string, password: string) => Promise<boolean>;
   registerUser: (name: string, email: string, password: string) => Promise<boolean>;
-  logoutUser: () => void;
+  logoutUser: () => Promise<void>;
   
   // Cart related
   setCartItems: (items: CartData) => void;
@@ -151,12 +151,13 @@ export interface ShopContextType {
   webSocket: {
     isConnected: boolean;
     connectionError: string | null;
-    connect: () => void;
+    /** Set when the server refused or revoked the session; the app should log out. */
+    authError: string | null;
+    connect: () => Socket | null;
     disconnect: () => void;
+    reconnect: () => Socket | null;
     joinOrderRoom: (orderId: string) => void;
     leaveOrderRoom: (orderId: string) => void;
-    adminJoinOrder: (orderId: string) => void;
-    adminLeaveOrder: (orderId: string) => void;
     sendTyping: (orderId: string) => void;
     sendStopTyping: (orderId: string) => void;
     socket: Socket | null;
@@ -216,6 +217,29 @@ export interface WebSocketMessage {
   _id?: string;
   userId?: string | { name?: string };
   [key: string]: unknown;
+}
+
+/** Discriminator carried by every `order_updated` / `new_order` payload. */
+export type RealtimeEventType =
+  | 'order_created'
+  | 'order_updated'
+  | 'payment_update';
+
+/**
+ * Server-built realtime notification (backend/services/socketService.js
+ * `toRealtimeOrder`). Full order data is retrieved through authorized HTTP
+ * endpoints; socket payloads contain only an id and state needed for updates.
+ */
+export interface RealtimeOrderPayload {
+  _id: string;
+  /** Unique per server emit — used to drop duplicate deliveries. */
+  eventId?: string;
+  type?: RealtimeEventType;
+  occurredAt?: string;
+  paymentStatus?: string | null;
+  orderStatus?: string | null;
+  refundStatus?: string | null;
+  updatedAt?: string | null;
 }
 
 // PayPal payment types

@@ -2,8 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { toast } from 'react-toastify';
 import { useNavigate } from 'react-router-dom';
 import { User, AuthResponse } from '../types';
+import { backendUrl } from '../config/backend';
 
-const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
 
 export const useAuth = () => {
   const navigate = useNavigate();
@@ -89,14 +89,34 @@ export const useAuth = () => {
   }, []);
 
   // Logout user
-  const logoutUser = useCallback(() => {
+  const logoutUser = useCallback(async () => {
+    let remoteRevocationSucceeded = false;
+    if (token) {
+      try {
+        const response = await fetch(`${backendUrl}/api/user/logout`, {
+          method: 'POST',
+          headers: { token },
+        });
+        remoteRevocationSucceeded = response.ok || response.status === 401;
+        if (!remoteRevocationSucceeded) {
+          throw new Error(`Session revocation failed with status ${response.status}`);
+        }
+      } catch (error) {
+        console.error('Logout request failed:', error);
+      }
+    }
+
     setToken('');
     setUser(null);
     localStorage.removeItem('token');
     localStorage.removeItem('cartItems');
-    toast.success('Logged out successfully');
+    if (remoteRevocationSucceeded || !token) {
+      toast.success('Logged out successfully');
+    } else {
+      toast.error('Signed out here, but the server could not revoke this session. Please try again when online.');
+    }
     navigate('/login');
-  }, [navigate]);
+  }, [navigate, token]);
 
   // Fetch user profile
   const fetchUserProfile = useCallback(async () => {

@@ -1,5 +1,6 @@
 import { Route, Routes } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { toast } from "react-toastify";
 
 import Add from "./pages/add";
 import List from "./pages/list";
@@ -14,13 +15,54 @@ import SearchAnalytics from "./pages/searchAnalytics";
 import Sidebar from "./components/Sidebar";
 import MobileNav from "./components/MobileNav";
 import NotFound from "./pages/NotFound";
+import RealtimeProvider from "./context/RealtimeProvider";
 import { ToastContainer } from "react-toastify";
+import { backendUrl } from "./config";
 
 const App = () => {
   const [token, setToken] = useState<string>(localStorage.getItem("token") || "");
 
   useEffect(() => {
     localStorage.setItem("token", token);
+  }, [token]);
+
+  // A revoked/expired session on the socket is a revoked session everywhere:
+  // drop the token so the operator lands back on the login screen instead of
+  // watching a feed that stopped updating.
+  const handleSessionEnded = useCallback((reason: string) => {
+    if (reason !== 'logout') {
+      toast.error(
+        reason === 'expired'
+          ? 'Your session expired. Please sign in again.'
+          : 'Your session ended. Please sign in again.'
+      );
+    }
+    setToken('');
+  }, []);
+
+  const logout = useCallback(async () => {
+    let remoteRevocationSucceeded = false;
+    if (token) {
+      try {
+        const response = await fetch(`${backendUrl}/api/user/admin/logout`, {
+          method: "POST",
+          headers: { token },
+        });
+        remoteRevocationSucceeded = response.ok || response.status === 401;
+        if (!remoteRevocationSucceeded) {
+          throw new Error(`Session revocation failed with status ${response.status}`);
+        }
+      } catch (error) {
+        console.error("Admin logout request failed:", error);
+      }
+    }
+
+    setToken("");
+    if (remoteRevocationSucceeded || !token) {
+      toast.success("Logged out successfully");
+    } else {
+      toast.error("Signed out here, but the server could not revoke this session. Please try again when online.");
+    }
   }, [token]);
 
   return (
@@ -42,9 +84,10 @@ const App = () => {
       {token === '' ? (
         <Login setToken={setToken} />
       ) : (
-        <div className="flex flex-col h-screen">
+        <RealtimeProvider token={token} onSessionEnded={handleSessionEnded}>
+          <div className="flex flex-col h-screen">
           {/* Sticky Navbar */}
-          <Navbar setToken={setToken} />
+          <Navbar onLogout={logout} />
 
           {/* Main layout */}
           <div className="flex flex-1 overflow-hidden">
@@ -72,7 +115,8 @@ const App = () => {
 
           {/* Mobile navigation (below lg, where the Sidebar is hidden — K-6 fix) */}
           <MobileNav />
-        </div>
+          </div>
+        </RealtimeProvider>
       )}
     </div>
   );

@@ -7,10 +7,21 @@ services:
     env_file:
       - ./backend/.env
     environment:
+      # Browser origins served by THIS compose file. The HTTP CORS policy and
+      # the Socket.IO handshake allow-list share this list (no wildcard: a
+      # wildcard cannot be combined with credentialed requests, and it would
+      # let any site drive the API). When the storefront/admin are served
+      # same-origin through their own nginx, /api and /socket.io are proxied and
+      # CORS is not involved at all.
       CORS_EXTRA_ORIGINS: "http://localhost:8080,http://localhost:8081"
     ports:
       - "3001:3001"
     restart: unless-stopped
+    # Graceful shutdown must finish before Docker escalates to SIGKILL. The app
+    # bounds its own drain (SHUTDOWN_TIMEOUT_MS, default 10 s) and closes the
+    # HTTP server, sockets and MongoDB in order; 30 s leaves headroom for a slow
+    # Mongo close so in-flight inventory writes are not cut off.
+    stop_grace_period: 30s
     healthcheck:
       test:
         - CMD
@@ -29,6 +40,11 @@ services:
     ports:
       - "8080:8080"
     restart: unless-stopped
+    # Start only once the API answers /health/ready, so the reverse proxy never
+    # serves a page whose /api or /socket.io upstream is still booting.
+    depends_on:
+      backend:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD
@@ -48,6 +64,9 @@ services:
     ports:
       - "8081:8080"
     restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD

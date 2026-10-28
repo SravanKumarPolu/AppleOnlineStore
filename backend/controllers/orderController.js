@@ -402,8 +402,8 @@ const placeOrder = async (req, res) => {
     // Send new order notification to admin
     socketService.sendNewOrderToAdmin(orderWithUser.toJSON());
     
-    // Send order update to user
-    socketService.sendOrderUpdateToUser(userId, orderWithUser.toJSON());
+    // Send order update to user (every tab/device of the same account).
+    socketService.sendOrderUpdateToUser(userId, orderWithUser.toJSON(), 'order_created');
     
     res.json({
       success: true,
@@ -891,11 +891,10 @@ const capturePayPalPayment = async (req, res) => {
       // Send real-time notifications
       const orderWithUser = await orderModel.findById(order._id).populate('userId', 'name email');
       
-      // Send payment status update to user
+      // Send payment status update — ONE broadcast to the shopper's personal
+      // room, the order room and the admin room. Emitting the order update to
+      // admin separately as well delivered the same change twice.
       socketService.sendPaymentStatusUpdate(orderWithUser.toJSON());
-      
-      // Send order status update to admin
-      socketService.sendOrderUpdateToAdmin(orderWithUser.toJSON());
       
       res.json({
         success: true,

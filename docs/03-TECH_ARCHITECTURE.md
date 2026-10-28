@@ -109,12 +109,14 @@ order before any write. Full state machine: [02-APP_FLOWS.md](./02-APP_FLOWS.md)
 ### 4.4 Realtime (Socket.IO)
 
 - Same HTTP server/port as REST; namespace default.
-- Handshake: client passes the JWT in `auth.token`; server verifies with
-  `JWT_SECRET` (same secret as REST).
+- Handshake: client passes the JWT in `auth.token`; HTTP and Socket.IO share
+  the HS256 verifier, account/tokenVersion checks, persistent session-id
+  revocation and periodic long-connection revalidation.
 - Rooms: `user_<id>` (per shopper), `admin_room` (admin sockets), `order_<id>`
   (opened for typing indicators).
-- Server→client events: `order_updated` (with `type: 'payment_update' |
-  'shipping_update'` variants), `new_order`, `user_typing`, `user_stop_typing`.
+- Server→client events: minimal `order_updated` (with
+  `type:'payment_update'`), `new_order`, `session_revoked`, `user_typing`,
+  `user_stop_typing`.
 - All emit helpers are null-safe: a down/uninitialized realtime layer can
   never 500 an order flow (this was a real bug fixed in Phase 1).
 - `/api/socket/status` exposes the connected-user count (public info

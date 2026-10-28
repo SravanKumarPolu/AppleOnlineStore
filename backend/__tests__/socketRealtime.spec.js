@@ -175,8 +175,9 @@ describe('Socket.IO — real server ↔ real client', () => {
 
     const delivered = await userEvent;
     expect(String(delivered._id)).toBe(orderId);
-    expect(delivered.paymentMethod).toBe('COD');
-    expect(delivered.items[0].name).toBe('Realtime Product');
+    expect(delivered.type).toBe('order_created');
+    expect(delivered).not.toHaveProperty('address');
+    expect(delivered).not.toHaveProperty('items');
 
     const adminNotice = await adminEvent;
     expect(String(adminNotice._id)).toBe(orderId);

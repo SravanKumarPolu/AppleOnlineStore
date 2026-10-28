@@ -1,8 +1,8 @@
 import React, { ReactNode, useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { toast } from "react-toastify";
 import {
   ShopContextType,
-  WebSocketMessage,
 } from "../types";
 import { useAuth } from "../hooks/useAuth";
 import { useCart } from "../hooks/useCart";
@@ -35,37 +35,27 @@ const ShopContextProvider: React.FC<ShopContextProviderProps> = ({ children }) =
   const { fetchProducts } = products;
   const { syncCartOnAuth, setCartItems } = cart;
 
-  // WebSocket handlers
-  const handleOrderUpdate = (data: WebSocketMessage) => {
-    console.log('📦 Order update in context:', data);
-    // Refresh orders if user is on orders page
-    // This will be handled by individual components
-  };
-
-  const handleNewOrder = (data: WebSocketMessage) => {
-    console.log('🆕 New order in context:', data);
-    // Handle new order notification
-  };
-
-  const handlePaymentUpdate = (data: WebSocketMessage) => {
-    console.log('💳 Payment update in context:', data);
-    // Handle payment status updates
-  };
-
-  const handleShippingUpdate = (data: WebSocketMessage) => {
-    console.log('🚚 Shipping update in context:', data);
-    // Handle shipping status updates
-  };
-
-  // WebSocket hook
+  // WebSocket hook — no per-render callbacks are passed: pages subscribe to the
+  // connection through `useRealtimeEvent(webSocket.socket, …)`, so a provider
+  // re-render can neither recreate the socket nor duplicate listeners.
   const webSocket = useWebSocket({
     token: auth.token,
     userId: auth.user?.id,
     userRole: auth.user?.role,
-    onOrderUpdate: handleOrderUpdate,
-    onNewOrder: handleNewOrder,
-    onPaymentUpdate: handlePaymentUpdate,
-    onShippingUpdate: handleShippingUpdate
+    // A revoked/expired session on the socket means the HTTP session is gone
+    // too. Clear it and send the shopper to the login screen with a reason,
+    // instead of keeping a dead feed that silently stops updating.
+    onAuthError: (reason) => {
+      if (reason !== 'logout') {
+        toast.error(
+          reason === 'expired'
+            ? 'Your session expired. Please sign in again.'
+            : 'Your session ended. Please sign in again.'
+        );
+      }
+      auth.setToken('');
+      navigate('/login');
+    },
   });
 
   // Navigation helper

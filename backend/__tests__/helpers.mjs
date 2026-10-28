@@ -93,11 +93,16 @@ export async function stopTestDb(instance) {
 export function makeAdminToken(email = 'admin@test.local') {
   return jwt.sign({ email, role: 'admin', type: 'admin' }, process.env.JWT_SECRET, {
     expiresIn: '1h',
+    jwtid: crypto.randomUUID(),
   });
 }
 
 export function makeUserToken(userId) {
-  return jwt.sign({ id: String(userId) }, process.env.JWT_SECRET, { expiresIn: '1h' });
+  return jwt.sign(
+    { id: String(userId), type: 'user' },
+    process.env.JWT_SECRET,
+    { expiresIn: '1h', jwtid: crypto.randomUUID() }
+  );
 }
 
 export async function createTestUserDoc(role = 'user') {

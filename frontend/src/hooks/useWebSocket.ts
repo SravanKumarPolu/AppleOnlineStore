@@ -1,219 +1,299 @@
-import { useEffect, useRef, useCallback, useState } from 'react';
-import { io, Socket } from 'socket.io-client';
+// Realtime client for the storefront.
+//
+// Historical defects this rewrite removes:
+//   1. `connect` was rebuilt on every render because it listed the callback
+//      props in its dependency array, and the provider passed freshly-created
+//      inline functions. The mount effect therefore disconnected and
+//      reconnected the socket on EVERY provider render — a reconnect storm
+//      that also reset room membership.
+//   2. `connect()` could be called again while a socket existed, orphaning the
+//      previous instance (its listeners were never removed) → duplicate toasts
+//      and duplicate order updates.
+//   3. Unmount/logout left the socket (and its listeners) attached to a stale
+//      token.
+//   4. Room subscriptions were not restored after an automatic reconnect.
+//   5. An authentication failure (expired/revoked token) retried forever
+//      because every `connect_error` looked transient.
+//   6. `payment_update` listeners were registered for
+//      events the server never emits (they arrive as `order_updated` with a
+//      `type` discriminator) — dead contracts that made the real contract
+//      ambiguous.
+//
+// The hook keeps ONE connection per authenticated context, stores callbacks in
+// a ref (identity changes never reconnect), and exposes `socket` as state so
+// page-level subscribers can re-register when the instance is replaced.
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { io, type Socket } from 'socket.io-client';
 import { toast } from 'react-toastify';
-import type { WebSocketMessage } from '../types';
+
+import type { RealtimeOrderPayload, WebSocketMessage } from '../types';
+import { socketUrl } from '../config/backend';
 
 export type { WebSocketMessage };
+
+/** Handshake/connection errors that a retry can never fix. */
+const AUTH_ERROR_RE = /authentication error|invalid token|token expired|session revoked|not active|unauthorized/i;
+
+/** How many event ids are remembered for duplicate suppression. */
+const SEEN_EVENT_LIMIT = 200;
 
 interface UseWebSocketProps {
   token: string | null;
   userId?: string;
+  /** 'admin' suppresses shopper-facing toasts (the admin app owns its UX). */
   userRole?: string;
-  onOrderUpdate?: (data: WebSocketMessage) => void;
-  onNewOrder?: (data: WebSocketMessage) => void;
-  onPaymentUpdate?: (data: WebSocketMessage) => void;
-  onShippingUpdate?: (data: WebSocketMessage) => void;
+  onOrderUpdate?: (data: RealtimeOrderPayload) => void;
+  onNewOrder?: (data: RealtimeOrderPayload) => void;
+  /** Payment changes also arrive through `order_updated`. */
+  onPaymentUpdate?: (data: RealtimeOrderPayload) => void;
+  onTyping?: (data: WebSocketMessage) => void;
+  /** Called once when the server refuses the session; the app should log out. */
+  onAuthError?: (reason: string) => void;
 }
+
+const label = (value?: string | null) =>
+  value ? value.charAt(0).toUpperCase() + value.slice(1) : 'updated';
 
 export const useWebSocket = ({
   token,
+  userId,
   userRole,
   onOrderUpdate,
   onNewOrder,
   onPaymentUpdate,
-  onShippingUpdate
+  onTyping,
+  onAuthError,
 }: UseWebSocketProps) => {
   const socketRef = useRef<Socket | null>(null);
+  const [socket, setSocket] = useState<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
 
-  const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+  // Callbacks live in a ref so their identity can never trigger a reconnect.
+  const handlersRef = useRef({
+    onOrderUpdate,
+    onNewOrder,
+    onPaymentUpdate,
+    onTyping,
+    onAuthError,
+    userRole,
+  });
+  handlersRef.current = {
+    onOrderUpdate,
+    onNewOrder,
+    onPaymentUpdate,
+    onTyping,
+    onAuthError,
+    userRole,
+  };
 
-  // Connect to WebSocket
-  const connect = useCallback(() => {
-    if (!token) {
-      console.log('🔌 No token available, skipping WebSocket connection');
-      return;
+  /** Order rooms this client wants to be in — replayed on every (re)connect. */
+  const joinedRoomsRef = useRef<Set<string>>(new Set());
+  /** Suppresses duplicate deliveries of the same server event id. */
+  const seenEventsRef = useRef<Set<string>>(new Set());
+  /** Last status signature per order: identical state must not re-toast. */
+  const lastStateRef = useRef<Map<string, string>>(new Map());
+  /** Orders already announced to an operator (survives reconnects). */
+  const announcedOrdersRef = useRef<Set<string>>(new Set());
+  const authFailedRef = useRef(false);
+  const identityRef = useRef<string | null>(null);
+
+  const rememberEvent = useCallback((eventId?: string) => {
+    if (!eventId) return true;
+    const seen = seenEventsRef.current;
+    if (seen.has(eventId)) return false;
+    seen.add(eventId);
+    if (seen.size > SEEN_EVENT_LIMIT) {
+      // Bounded memory: drop the oldest half (insertion order is preserved).
+      const keep = [...seen].slice(-Math.floor(SEEN_EVENT_LIMIT / 2));
+      seenEventsRef.current = new Set(keep);
     }
+    return true;
+  }, []);
 
-    if (socketRef.current?.connected) {
-      console.log('🔌 WebSocket already connected');
-      return;
-    }
+  const teardown = useCallback((instance: Socket | null) => {
+    if (!instance) return;
+    // Defensive: teardown must never throw — a failure here would leave the
+    // socket (and its listeners) alive past logout.
+    if (typeof instance.removeAllListeners === 'function') instance.removeAllListeners();
+    instance.disconnect();
+  }, []);
 
-    console.log('🔌 Connecting to WebSocket...');
-    
-    try {
-      socketRef.current = io(backendUrl, {
-        auth: { token },
-        transports: ['websocket', 'polling'],
-        timeout: 20000,
-        reconnection: true,
-        reconnectionAttempts: 5,
-        reconnectionDelay: 1000,
-        reconnectionDelayMax: 5000
-      });
-
-      // Connection events
-      socketRef.current.on('connect', () => {
-        console.log('🔗 WebSocket connected successfully');
-        setIsConnected(true);
-        setConnectionError(null);
-      });
-
-      socketRef.current.on('disconnect', (reason: string) => {
-        console.log('🔌 WebSocket disconnected:', reason);
-        setIsConnected(false);
-        
-        if (reason === 'io server disconnect') {
-          // Server disconnected, try to reconnect
-          setTimeout(() => {
-            if (socketRef.current) {
-              socketRef.current.connect();
-            }
-          }, 1000);
-        }
-      });
-
-      socketRef.current.on('connect_error', (error: Error) => {
-        console.error('🔌 WebSocket connection error:', error);
-        setConnectionError(error.message);
-        setIsConnected(false);
-      });
-
-      // Order update events
-      socketRef.current.on('order_updated', (data: WebSocketMessage) => {
-        console.log('📦 Order update received:', data);
-        
-        if (onOrderUpdate) {
-          onOrderUpdate(data);
-        }
-
-        // Show toast notification based on update type
-        if (data.type === 'payment_update') {
-          toast.success(`Payment status updated: ${data.paymentStatus}`);
-        } else if (data.type === 'shipping_update') {
-          toast.success(`Shipping status updated: ${data.orderStatus}`);
-        } else {
-          toast.success(`Order status updated: ${data.orderStatus}`);
-        }
-      });
-
-      // New order notification (for admin)
-      socketRef.current.on('new_order', (data: WebSocketMessage) => {
-        console.log('🆕 New order received:', data);
-
-        if (onNewOrder) {
-          onNewOrder(data);
-        }
-
-        if (userRole === 'admin') {
-          // `userId` may arrive as the user object or its id depending on the
-          // emitting endpoint — narrow before reading the display name.
-          const customerName =
-            typeof data.userId === 'object' && data.userId !== null
-              ? data.userId.name
-              : undefined;
-          toast.info(`New order received from ${customerName || 'Customer'}`);
-        }
-      });
-
-      // Payment status update
-      socketRef.current.on('payment_update', (data: WebSocketMessage) => {
-        console.log('💳 Payment update received:', data);
-        
-        if (onPaymentUpdate) {
-          onPaymentUpdate(data);
-        }
-
-        toast.success(`Payment ${data.paymentStatus}: Order #${data._id}`);
-      });
-
-      // Shipping update
-      socketRef.current.on('shipping_update', (data: WebSocketMessage) => {
-        console.log('🚚 Shipping update received:', data);
-        
-        if (onShippingUpdate) {
-          onShippingUpdate(data);
-        }
-
-        toast.success(`Shipping status: ${data.orderStatus}`);
-      });
-
-      // User typing events (for future chat feature)
-      socketRef.current.on('user_typing', (data: unknown) => {
-        console.log('⌨️ User typing:', data);
-        // Handle typing indicator
-      });
-
-      socketRef.current.on('user_stop_typing', (data: unknown) => {
-        console.log('⌨️ User stopped typing:', data);
-        // Handle typing indicator
-      });
-
-    } catch (error) {
-      console.error('🔌 WebSocket connection failed:', error);
-      setConnectionError('Failed to connect to WebSocket');
-    }
-  }, [token, backendUrl, onOrderUpdate, onNewOrder, onPaymentUpdate, onShippingUpdate, userRole]);
-
-  // Disconnect from WebSocket
   const disconnect = useCallback(() => {
-    if (socketRef.current) {
-      console.log('🔌 Disconnecting WebSocket...');
-      socketRef.current.disconnect();
-      socketRef.current = null;
+    const instance = socketRef.current;
+    socketRef.current = null;
+    teardown(instance);
+    setSocket(null);
+    setIsConnected(false);
+  }, [teardown]);
+
+  const connect = useCallback(() => {
+    if (!token) return null;
+    // Single connection per authenticated context: never create a second
+    // socket while one is alive.
+    if (socketRef.current) return socketRef.current;
+
+    authFailedRef.current = false;
+    const instance = io(socketUrl, {
+      auth: { token },
+      transports: ['websocket', 'polling'],
+      timeout: 20000,
+      // Bounded retries: an unreachable backend must not retry forever. After
+      // the budget the UI shows a manual "Reconnect" affordance.
+      reconnection: true,
+      reconnectionAttempts: 8,
+      reconnectionDelay: 800,
+      reconnectionDelayMax: 15000,
+      randomizationFactor: 0.4,
+    });
+
+    socketRef.current = instance;
+    setSocket(instance);
+
+    instance.on('connect', () => {
+      setIsConnected(true);
+      setConnectionError(null);
+      setAuthError(null);
+      authFailedRef.current = false;
+      // Room membership lives on the server socket: a reconnect starts with an
+      // empty room set, so every subscription is replayed here.
+      for (const orderId of joinedRoomsRef.current) {
+        instance.emit('join_order_room', orderId);
+      }
+    });
+
+    instance.on('disconnect', (reason: string) => {
       setIsConnected(false);
-    }
-  }, []);
+      // `io server disconnect` means the server closed us deliberately (e.g.
+      // revoked session); the client must not reconnect on its own.
+      if (reason === 'io server disconnect') {
+        setConnectionError('Disconnected by the server');
+      }
+    });
 
-  // Join order room
+    instance.on('connect_error', (error: Error) => {
+      const message = error?.message || 'Connection failed';
+      setIsConnected(false);
+      setConnectionError(message);
+
+      if (AUTH_ERROR_RE.test(message)) {
+        // Retrying an expired/revoked token can never succeed and hammers the
+        // server. Stop, and let the app decide (usually: log out).
+        authFailedRef.current = true;
+        instance.io.opts.reconnection = false;
+        setAuthError(message);
+        handlersRef.current.onAuthError?.(message);
+      }
+    });
+
+    // Server-initiated revocation (password reset, deactivated account,
+    // rotated signing secret): the payload says why, then the transport closes.
+    instance.on('session_revoked', (payload: { reason?: string } = {}) => {
+      const reason = payload.reason || 'revoked';
+      authFailedRef.current = true;
+      instance.io.opts.reconnection = false;
+      setIsConnected(false);
+      setAuthError(reason);
+      setConnectionError('Session ended, please sign in again');
+      handlersRef.current.onAuthError?.(reason);
+    });
+
+    instance.on('order_updated', (data: RealtimeOrderPayload) => {
+      if (!data || typeof data !== 'object') return;
+      if (!rememberEvent(data.eventId)) return;
+
+      const orderId = String(data._id ?? '');
+      const signature = `${data.orderStatus}|${data.paymentStatus}|${data.refundStatus ?? ''}`;
+      const previous = lastStateRef.current.get(orderId);
+      lastStateRef.current.set(orderId, signature);
+
+      if (data.type === 'payment_update') {
+        handlersRef.current.onPaymentUpdate?.(data);
+      }
+      handlersRef.current.onOrderUpdate?.(data);
+
+      // Operators get their own notifications in the admin app; a buyer who
+      // just checked out already saw a confirmation, so no toast either.
+      if (handlersRef.current.userRole === 'admin' || data.type === 'order_created') return;
+      if (previous === signature) return;
+
+      if (data.type === 'payment_update') {
+        toast.success(`Payment status: ${label(data.paymentStatus)}`);
+      } else if (data.orderStatus) {
+        toast.success(`Order status: ${label(data.orderStatus)}`);
+      }
+    });
+
+    instance.on('new_order', (data: RealtimeOrderPayload) => {
+      if (!data || typeof data !== 'object') return;
+      if (!rememberEvent(data.eventId)) return;
+
+      handlersRef.current.onNewOrder?.(data);
+
+      if (handlersRef.current.userRole !== 'admin') return;
+      const orderId = String(data._id ?? '');
+      if (announcedOrdersRef.current.has(orderId)) return;
+      announcedOrdersRef.current.add(orderId);
+      toast.info('New order received');
+    });
+
+    instance.on('user_typing', (data: WebSocketMessage) => {
+      handlersRef.current.onTyping?.(data);
+    });
+    instance.on('user_stop_typing', (data: WebSocketMessage) => {
+      handlersRef.current.onTyping?.(data);
+    });
+
+    return instance;
+  }, [rememberEvent, token]);
+
+  /** Manual retry, used by the "Reconnect" affordance after the budget expired. */
+  const reconnect = useCallback(() => {
+    if (!token || authFailedRef.current) return null;
+    const instance = socketRef.current;
+    if (instance) {
+      if (instance.connected) return instance;
+      setConnectionError(null);
+      instance.connect();
+      return instance;
+    }
+    return connect();
+  }, [connect, token]);
+
   const joinOrderRoom = useCallback((orderId: string) => {
-    if (socketRef.current?.connected) {
-      console.log(`📦 Joining order room: ${orderId}`);
-      socketRef.current.emit('join_order_room', orderId);
-    }
+    if (!orderId) return;
+    joinedRoomsRef.current.add(orderId);
+    // Only emit while connected: socket.io-client would otherwise buffer the
+    // packet AND the connect handler would replay it, sending the join twice.
+    if (socketRef.current?.connected) socketRef.current.emit('join_order_room', orderId);
   }, []);
 
-  // Leave order room
   const leaveOrderRoom = useCallback((orderId: string) => {
-    if (socketRef.current?.connected) {
-      console.log(`📦 Leaving order room: ${orderId}`);
-      socketRef.current.emit('leave_order_room', orderId);
-    }
+    if (!orderId) return;
+    joinedRoomsRef.current.delete(orderId);
+    if (socketRef.current?.connected) socketRef.current.emit('leave_order_room', orderId);
   }, []);
 
-  // Admin join order room
-  const adminJoinOrder = useCallback((orderId: string) => {
-    if (socketRef.current?.connected && userRole === 'admin') {
-      console.log(`👨‍💼 Admin joining order room: ${orderId}`);
-      socketRef.current.emit('admin_join_order', orderId);
-    }
-  }, [userRole]);
-
-  // Admin leave order room
-  const adminLeaveOrder = useCallback((orderId: string) => {
-    if (socketRef.current?.connected && userRole === 'admin') {
-      console.log(`👨‍💼 Admin leaving order room: ${orderId}`);
-      socketRef.current.emit('admin_leave_order', orderId);
-    }
-  }, [userRole]);
-
-  // Send typing indicator
   const sendTyping = useCallback((orderId: string) => {
-    if (socketRef.current?.connected) {
-      socketRef.current.emit('typing', { orderId });
-    }
+    if (socketRef.current?.connected) socketRef.current.emit('typing', { orderId });
   }, []);
 
-  // Send stop typing indicator
   const sendStopTyping = useCallback((orderId: string) => {
-    if (socketRef.current?.connected) {
-      socketRef.current.emit('stop_typing', { orderId });
-    }
+    if (socketRef.current?.connected) socketRef.current.emit('stop_typing', { orderId });
   }, []);
 
-  // Auto-connect when token changes
+  useEffect(() => {
+    const identity = userId ? `user:${userId}` : `role:${userRole ?? ''}`;
+    if (identityRef.current !== null && identityRef.current !== identity) {
+      joinedRoomsRef.current.clear();
+    }
+    identityRef.current = identity;
+  }, [userId, userRole]);
+
+  // Connect on login, disconnect on logout/unmount. `connect`/`disconnect` only
+  // change identity when the token does, so a re-render cannot restart the
+  // connection.
   useEffect(() => {
     if (token) {
       connect();
@@ -221,7 +301,6 @@ export const useWebSocket = ({
       disconnect();
     }
 
-    // Cleanup on unmount
     return () => {
       disconnect();
     };
@@ -230,14 +309,42 @@ export const useWebSocket = ({
   return {
     isConnected,
     connectionError,
+    authError,
     connect,
     disconnect,
+    reconnect,
     joinOrderRoom,
     leaveOrderRoom,
-    adminJoinOrder,
-    adminLeaveOrder,
     sendTyping,
     sendStopTyping,
-    socket: socketRef.current
+    socket,
   };
-}; 
+};
+
+/**
+ * Subscribe to a socket event for the lifetime of a component.
+ *
+ * Re-registers automatically when the socket instance is replaced (token
+ * change, reconnect after an instance teardown) and always calls the latest
+ * handler, so callers do not need useCallback gymnastics.
+ */
+export function useRealtimeEvent<T = RealtimeOrderPayload>(
+  socket: Socket | null,
+  event: string,
+  handler: (data: T) => void
+) {
+  const handlerRef = useRef(handler);
+
+  useEffect(() => {
+    handlerRef.current = handler;
+  }, [handler]);
+
+  useEffect(() => {
+    if (!socket) return undefined;
+    const listener = (data: T) => handlerRef.current(data);
+    socket.on(event, listener);
+    return () => {
+      socket.off(event, listener);
+    };
+  }, [socket, event]);
+}

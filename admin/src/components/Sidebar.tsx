@@ -163,7 +163,7 @@ function Sidebar() {
             {/* Admin Panel Title */}
             <div className="text-center mb-4">
               <h3 className="text-sm font-bold text-neutral-900 uppercase tracking-wider mb-1">
-                E-commerce Admin Panel
+                NovaCart Admin Panel
               </h3>
               <p className="text-xs text-neutral-500 font-medium">Professional Management System</p>
             </div>

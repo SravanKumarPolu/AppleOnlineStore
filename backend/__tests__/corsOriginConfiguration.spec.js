@@ -1,7 +1,7 @@
 // Phase 4 regression — CORS origin configuration.
 //
 // Pins the reworked origin policy (config/allowedOrigins.js):
-//   - local development origins are always allowed (3000 / 5173 / 5174)
+//   - local development origins are allowed only outside production
 //   - production origins come from the ENVIRONMENT (FRONTEND_URL, ADMIN_URL,
 //     CORS_EXTRA_ORIGINS) — the historical SKR Netlify domains are no longer
 //     hardcoded
@@ -20,6 +20,17 @@ describe('buildAllowedOrigins — environment-driven allowlist', () => {
     expect(origins).toContain('http://localhost:3000');
     expect(origins).toContain('http://localhost:5173');
     expect(origins).toContain('http://localhost:5174');
+  });
+
+  it('does not include local development origins in production unless explicitly configured', () => {
+    const origins = buildAllowedOrigins({
+      NODE_ENV: 'production',
+      FRONTEND_URL: 'https://shop.example.com',
+      ADMIN_URL: 'https://admin.example.com',
+    });
+
+    expect(origins).toEqual(['https://shop.example.com', 'https://admin.example.com']);
+    expect(origins).not.toContain('http://localhost:5173');
   });
 
   it('includes FRONTEND_URL and ADMIN_URL when set', () => {

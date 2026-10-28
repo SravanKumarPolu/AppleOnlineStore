@@ -77,11 +77,14 @@ const Login: React.FC<LoginProps> = ({ setToken }) => {
           {/* Enhanced Form */}
           <form className="space-y-8" onSubmit={onSubmitHandler}>
             <div className="form-group">
-              <label className="form-label">
+              <label className="form-label" htmlFor="admin-login-email">
                 Email Address
               </label>
               <input
+                id="admin-login-email"
+                name="email"
                 type="email"
+                autoComplete="username"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="admin@example.com"
@@ -92,11 +95,14 @@ const Login: React.FC<LoginProps> = ({ setToken }) => {
             </div>
 
             <div className="form-group">
-              <label className="form-label">
+              <label className="form-label" htmlFor="admin-login-password">
                 Password
               </label>
               <input
+                id="admin-login-password"
+                name="password"
                 type="password"
+                autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Enter your password"

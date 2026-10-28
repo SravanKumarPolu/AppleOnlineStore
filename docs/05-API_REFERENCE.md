@@ -2,7 +2,7 @@
 
 > **Status:** Enumerated from the route files and controllers on 2026-10-24.
 > Base URL: `http(s)://<backend-host>:<PORT>` (default `3001` in dev).
-> **45 router endpoints across 7 routers + 5 app-level routes.**
+> **47 router endpoints across 7 routers + 5 app-level routes.**
 >
 > **Chain:** [01-PRD.md](./01-PRD.md) → [02-APP_FLOWS.md](./02-APP_FLOWS.md)
 > → [03-TECH_ARCHITECTURE.md](./03-TECH_ARCHITECTURE.md) →
@@ -16,14 +16,15 @@
   endpoints predate the envelope and return plain `{ message }` shapes).
 - **Auth:** token in a custom **`token` header** (storefront convention) or
   **`Authorization: Bearer`** (admin analytics pages) — both accepted.
-  Shopper tokens: 7-day JWT `{id}`. Admin tokens: 1-day JWT
-  `{email, role:'admin', type:'admin'}` or a DB user with `role:'admin'`.
+  Shopper tokens: 7-day HS256 JWT with user id, token version, token type and
+  unique session id. Admin tokens: 1-day HS256 JWT with `{email,
+  role:'admin', type:'admin'}` and a unique session id, or a DB user with
+  `role:'admin'`.
 - **Rate limits:** global 1000 req / 15 min / IP; the whole `/api/user` router
   additionally sits behind an auth limiter (20 req / 15 min / IP).
-- **CORS:** allowlist = `http://localhost:{3000,5173,5174}`,
-  `https://skr-e-commerce.netlify.app`, `https://admin-skr-e-commerce.netlify.app`
-  (legacy Netlify origins), plus `FRONTEND_URL` / `ADMIN_URL` env values.
-  Other origins are rejected.
+- **CORS:** development localhost origins are enabled only outside production.
+  Production browser origins come from `FRONTEND_URL`, `ADMIN_URL` and
+  `CORS_EXTRA_ORIGINS`; unlisted origins are rejected.
 - **Body limits:** 10 MB (JSON + urlencoded). Webhook route only: exact raw
   bytes preserved for signature verification.
 - **Errors:** 401 unauthenticated · 403 authenticated-but-forbidden ·
@@ -50,16 +51,18 @@
 | 1 | `POST /register` | public | `registerUser` | Body `{name, email, password}`. Validates email + password strength; bcrypt(12). 201 → `{success, token, user:{id,name,email,role}}`. Welcome email async. 400 if email taken / invalid |
 | 2 | `POST /login` | public | `loginUser` | Body `{email, password}`. 200 + token; 401 invalid; **423 if locked** (5 fails → 2 h); stamps `lastLogin`, resets attempts |
 | 3 | `POST /admin` | public | `adminLogin` | Body `{email, password}` compared to `ADMIN_EMAIL`/`ADMIN_PASSWORD` env (plaintext compare — known limitation S3). 200 → 1-day admin token `{user:{email, role:'admin'}}`; 401 otherwise; 500 if admin env unset |
-| 4 | `POST /forgot-password` | public | `requestPasswordReset` | Body `{email}`. Always the same neutral 202 response for unknown, inactive, and active accounts. Stores a 1-hour hashed token; clears it when SMTP handoff fails. Response/UI do not claim inbox delivery. SMTP transport is verified before send; link uses the configured frontend origin. |
-| 5 | `POST /reset-password` | public | `resetPassword` | Body `{token, newPassword}`. Hashes token, matches with expiry; validates strength; 200 on success; 400 invalid/expired |
-| 6 | `GET /profile` | `authUser` | `getUserProfile` | 200 `{user:{id,name,email,role,createdAt,lastLogin}}`; 404 |
-| 7 | `PUT /profile` | `authUser` | `updateUserProfile` | Body `{name?, email?}`; email uniqueness checked; 200 updated user |
-| 8 | `POST /addresses` | `authUser` | `addUserAddress` | Body = address subdocument (see §3.1). `default:true` demotes the rest; as-built a first address is NOT auto-defaulted unless flagged. 200 `{addresses}` |
-| 9 | `GET /addresses` | `authUser` | `getUserAddresses` | 200 `{addresses}` |
-| 10 | `PUT /addresses/default` | `authUser` | `setDefaultAddress` | Body `{addressId}`; 404 if not owned |
-| 11 | `PUT /addresses/:addressId` | `authUser` | `editUserAddress` | Body = fields to merge |
-| 12 | `DELETE /addresses/:addressId` | `authUser` | `deleteUserAddress` | |
-| 13 | `GET /debug` | `authAdmin` | `debugUsers` | Admin-only user dump (sensitive fields excluded). Was user-accessible before Phase 1 |
+| 4 | `POST /logout` | `authUser` | `logoutUser` | Revokes this JWT session across tabs/devices; older shopper tokens without a session id fall back to account tokenVersion revocation |
+| 5 | `POST /admin/logout` | `authAdmin` | `logoutAdmin` | Revokes this admin JWT session across tabs/devices |
+| 6 | `POST /forgot-password` | public | `requestPasswordReset` | Body `{email}`. Always the same neutral 202 response for unknown, inactive, and active accounts. Stores a 1-hour hashed token; clears it when SMTP handoff fails. Response/UI do not claim inbox delivery. SMTP transport is verified before send; link uses the configured frontend origin. |
+| 7 | `POST /reset-password` | public | `resetPassword` | Body `{token, newPassword}`. Hashes token, matches with expiry; validates strength; bumps tokenVersion and closes all active sockets for the account; 200 on success; 400 invalid/expired |
+| 8 | `GET /profile` | `authUser` | `getUserProfile` | 200 `{user:{id,name,email,role,createdAt,lastLogin}}`; 404 |
+| 9 | `PUT /profile` | `authUser` | `updateUserProfile` | Body `{name?, email?}`; email uniqueness checked; 200 updated user |
+| 10 | `POST /addresses` | `authUser` | `addUserAddress` | Body = address subdocument (see §3.1). `default:true` demotes the rest; as-built a first address is NOT auto-defaulted unless flagged. 200 `{addresses}` |
+| 11 | `GET /addresses` | `authUser` | `getUserAddresses` | 200 `{addresses}` |
+| 12 | `PUT /addresses/default` | `authUser` | `setDefaultAddress` | Body `{addressId}`; 404 if not owned |
+| 13 | `PUT /addresses/:addressId` | `authUser` | `editUserAddress` | Body = fields to merge |
+| 14 | `DELETE /addresses/:addressId` | `authUser` | `deleteUserAddress` | |
+| 15 | `GET /debug` | `authAdmin` | `debugUsers` | Admin-only user dump (sensitive fields excluded). Was user-accessible before Phase 1 |
 
 Address subdocument fields (all required except `deliveryInstructions`,
 `default`): `firstName, lastName, email, street, city, state, zipcode,
@@ -173,17 +176,20 @@ operator.
 
 ## 10. Socket.IO events
 
-Connection: `io(backendUrl, { auth: { token } })` — the handshake token is
-verified with `JWT_SECRET` (invalid token → connection rejected). Rooms:
-`user_<id>` (auto for shoppers), `admin_room` (admin sockets), `order_<id>`
-(opened for typing).
+Connection: `io(backendUrl, { auth: { token } })` — the handshake shares the
+HTTP HS256 verifier, checks expiry/account state/tokenVersion and revoked
+session ids, and revalidates long-lived sockets periodically. Rooms:
+`user_<id>` (shopper sockets), `admin_room` (admin-role sockets),
+`order_<id>` (ownership-checked for shoppers; admin-only otherwise).
 
 | Direction | Event | Payload / notes |
 |---|---|---|
-| server → client | `order_updated` | Order document (+ `type: 'payment_update'` \| `'shipping_update'` variant); sent to `user_<id>` |
-| server → client | `new_order` | Populated order; sent to `admin_room` on placement |
-| server → client | `user_typing` / `user_stop_typing` | Relayed within `order_<id>` rooms; **frontend only console-logs these** |
+| server → client | `order_updated` | Minimal `{_id,eventId,type,orderStatus,paymentStatus,refundStatus,updatedAt}` state; `type` is `order_created`, `order_updated` or `payment_update`; union-room broadcast prevents duplicates |
+| server → client | `new_order` | Minimal `{_id,eventId,type,orderStatus,paymentStatus,refundStatus,updatedAt}` notice to `admin_room`; full data is fetched through the authenticated orders API |
+| server → client | `session_revoked` | `{reason}` followed by socket disconnect; emitted after logout, account tokenVersion change, expiry or authorization revalidation failure |
+| server → client | `user_typing` / `user_stop_typing` | Relayed only within an authorized, joined `order_<id>` room; no email or address data |
 | client → server | `typing` | `{orderId, …}` — relayed to the order room (typist's own socket excluded) |
+| client → server | `join_order_room` / `leave_order_room` | Order id validated; joins are acknowledged and customer ownership is verified |
 
 All server emits are null-safe when the realtime layer is down.
 

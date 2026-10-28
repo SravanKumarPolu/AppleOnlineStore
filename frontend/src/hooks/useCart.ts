@@ -1,8 +1,8 @@
 import { useState, useCallback } from 'react';
 import { toast } from 'react-toastify';
 import { CartData, Product } from '../types';
+import { backendUrl } from '../config/backend';
 
-const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
 
 export const useCart = (token: string, userId: string | undefined) => {
   const [cartItems, setCartItems] = useState<CartData>({});

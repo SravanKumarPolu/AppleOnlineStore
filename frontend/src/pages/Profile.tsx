@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { useShopContext } from "../context/shop-context";
 import { useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
+import { backendUrl } from '../config/backend';
 
-const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
 
 const Profile = () => {
   const { isLoggedIn, user, logoutUser, token, setUser } = useShopContext();

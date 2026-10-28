@@ -137,9 +137,11 @@ Flow notation: `storefront` = `frontend/`, `admin` = `admin/`, `API` =
    with status and payment status.
 2. Realtime: the storefront's `useWebSocket` connects with the auth token;
    server authenticates the handshake and joins room `user_<id>`.
-3. Status changes by an admin emit `order_updated` (with `type:
-   'payment_update'` or `'shipping_update'` variants); new orders emit
-   `new_order`. The Orders page refreshes its list on these events.
+3. Admin order changes emit minimal `order_updated` state notifications
+   (including `type:'payment_update'` for payment changes); new orders emit a
+   minimal `new_order` notice. The admin list and customer Orders page patch
+   visible statuses and fetch full order data through their authorized APIs
+   when pagination/filter membership may have changed.
 4. `user_typing` / `user_stop_typing` are relayed by the server inside
    `order_<id>` rooms; the current frontend handlers only console-log them.
 

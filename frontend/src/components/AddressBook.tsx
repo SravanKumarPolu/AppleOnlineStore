@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useShopContext } from "../context/shop-context";
 import { toast } from "react-toastify";
+import { backendUrl } from '../config/backend';
 
-const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
 
 interface Address {
   _id: string;

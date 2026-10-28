@@ -12,12 +12,19 @@ import { defineConfig, devices } from '@playwright/test';
 // stack (or run in parallel on CI) without touching those processes:
 //   E2E_PORT=3101 E2E_WEB_PORT=5273 npm run test:e2e
 //
+// A third server (the admin dashboard, default :5174) backs the realtime spec:
+// the operator logs in there in a SEPARATE browser context while the shopper
+// keeps the storefront open.
+//   E2E_ADMIN_PORT=5274
+//
 // NOTE: the PayPal branch needs real sandbox credentials and a public HTTPS
 // host (docs/devops/08) — only COD/Card + auth wiring run here.
 const API_PORT = Number(process.env.E2E_PORT || 3001);
 const WEB_PORT = Number(process.env.E2E_WEB_PORT || 5173);
+const ADMIN_WEB_PORT = Number(process.env.E2E_ADMIN_PORT || 5174);
 const apiUrl = `http://localhost:${API_PORT}`;
 const webUrl = `http://localhost:${WEB_PORT}`;
+const adminUrl = `http://localhost:${ADMIN_WEB_PORT}`;
 
 export default defineConfig({
   testDir: './e2e',
@@ -54,11 +61,26 @@ export default defineConfig({
         E2E_PORT: String(API_PORT),
         // The storefront origin must be CORS-allowed by the E2E backend.
         FRONTEND_URL: webUrl,
+        // The admin dashboard origin must be allowed too: the realtime spec
+        // drives a real operator session from a second browser context.
+        ADMIN_URL: adminUrl,
       },
     },
     {
       command: `npm run dev -- --port ${WEB_PORT} --strictPort`,
       url: webUrl,
+      reuseExistingServer: false,
+      timeout: 180_000,
+      env: {
+        ...process.env,
+        VITE_BACKEND_URL: apiUrl,
+      },
+    },
+    {
+      // Admin dashboard (operator half of the realtime acceptance flow).
+      command: `npm run dev -- --port ${ADMIN_WEB_PORT} --strictPort`,
+      cwd: '../admin',
+      url: adminUrl,
       reuseExistingServer: false,
       timeout: 180_000,
       env: {

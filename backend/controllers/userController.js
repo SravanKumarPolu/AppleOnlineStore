@@ -4,6 +4,8 @@ import userModel from "../models/userModel.js";
 import validator from 'validator';
 import emailService from '../services/emailService.js';
 import crypto from 'crypto';
+import socketService from '../services/socketService.js';
+import { revokeSession } from '../services/sessionRevocationService.js';
 
 // JWT token creation with expiration. The `tv` claim pins the token to the
 // user's tokenVersion at login; the auth middleware rejects tokens whose tv
@@ -11,8 +13,9 @@ import crypto from 'crypto';
 // Legacy tokens signed before this change carry no tv and are treated as
 // version 0.
 const createToken = (id, tokenVersion = 0) => {
-  return jwt.sign({ id, tv: tokenVersion }, process.env.JWT_SECRET, {
-    expiresIn: '7d'
+  return jwt.sign({ id, tv: tokenVersion, type: 'user' }, process.env.JWT_SECRET, {
+    expiresIn: '7d',
+    jwtid: crypto.randomUUID(),
   });
 };
 
@@ -275,6 +278,7 @@ const resetPassword = async (req, res, next) => {
     // the stored version), so a reset also logs out all other sessions.
     user.tokenVersion = (user.tokenVersion ?? 0) + 1;
     await user.clearPasswordResetToken();
+    socketService.revokeUserSessions(user._id, 'revoked');
 
     // Reset login attempts
     await user.resetLoginAttempts();
@@ -321,7 +325,7 @@ const adminLogin = async (req, res, next) => {
           type: 'admin' 
         }, 
         process.env.JWT_SECRET,
-        { expiresIn: '1d' } // Shorter expiration for admin
+        { expiresIn: '1d', jwtid: crypto.randomUUID() } // Shorter expiration for admin
       );
       
       res.json({ 
@@ -341,6 +345,35 @@ const adminLogin = async (req, res, next) => {
 
   } catch (error) {
     console.error('Admin login error:', error);
+    next(error);
+  }
+};
+
+const logoutUser = async (req, res, next) => {
+  try {
+    const tokenId = req.auth?.tokenId;
+    if (tokenId) {
+      await revokeSession(tokenId, req.auth.expiresAt);
+      socketService.revokeToken(tokenId, 'logout');
+    } else {
+      // Older shopper JWTs predate per-session ids. Invalidate those safely
+      // by bumping the account version; new sessions use the targeted path.
+      await userModel.updateOne({ _id: req.user.id }, { $inc: { tokenVersion: 1 } });
+      socketService.revokeUserSessions(req.user.id, 'logout');
+    }
+
+    return res.json({ success: true, message: 'Session ended' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const logoutAdmin = async (req, res, next) => {
+  try {
+    await revokeSession(req.auth.tokenId, req.auth.expiresAt);
+    socketService.revokeToken(req.auth.tokenId, 'logout');
+    return res.json({ success: true, message: 'Session ended' });
+  } catch (error) {
     next(error);
   }
 };
@@ -647,6 +680,8 @@ export {
   requestPasswordReset,
   resetPassword,
   adminLogin,
+  logoutUser,
+  logoutAdmin,
   getUserProfile,
   updateUserProfile,
   addUserAddress,

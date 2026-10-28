@@ -1,8 +1,10 @@
-import React, { useCallback, useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { backendUrl } from '../config';
 import { toast } from 'react-toastify';
 import { getApiErrorMessage, getAxiosErrorResponse, isNetworkError } from '../apiTypes';
+import { useRealtime } from '../context/realtime-context';
+import { useRealtimeEvent } from '../hooks/useRealtimeEvent';
 
 interface OrderItem {
   productId: string;
@@ -82,6 +84,17 @@ interface OrdersProps {
   token: string;
 }
 
+/** Shape of the realtime order payload (backend services/socketService.js). */
+interface RealtimeOrderEvent {
+  _id?: string;
+  eventId?: string;
+  type?: 'order_created' | 'order_updated' | 'payment_update';
+  orderStatus?: string | null;
+  paymentStatus?: string | null;
+  refundStatus?: string | null;
+  updatedAt?: string | null;
+}
+
 const Orders: React.FC<OrdersProps> = ({ token }) => {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -99,9 +112,21 @@ const Orders: React.FC<OrdersProps> = ({ token }) => {
   const [sortBy, setSortBy] = useState<string>('createdAt');
   const [sortOrder, setSortOrder] = useState<string>('desc');
 
-  const fetchOrders = useCallback(async () => {
+  // Realtime: the provider owns the single admin socket. Without it (unit
+  // tests, socket unavailable) the getters default to a disconnected state and
+  // every subscription below is a no-op.
+  const realtime = useRealtime();
+
+  // Latest list/params without re-subscribing on each render.
+  const ordersRef = useRef<Order[]>(orders);
+  useEffect(() => {
+    ordersRef.current = orders;
+  }, [orders]);
+
+  const fetchOrders = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
     try {
-      setLoading(true);
+      // A realtime refresh must not blank the table behind a full-page spinner.
+      if (!silent) setLoading(true);
 
       // Check if token exists
       if (!token) {
@@ -160,13 +185,82 @@ const Orders: React.FC<OrdersProps> = ({ token }) => {
         toast.error(getApiErrorMessage(error, 'Failed to fetch orders'));
       }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [token, currentPage, sortBy, sortOrder, selectedStatus, selectedPaymentStatus, userEmail, startDate, endDate]);
 
   useEffect(() => {
     fetchOrders();
   }, [fetchOrders]);
+
+  // ---------------------------------------------------------------------
+  // Live order feed. Existing rows are patched in place (status badges flip
+  // immediately); anything else schedules ONE debounced silent refresh so the
+  // list, stats and pagination stay consistent without polling.
+  // ---------------------------------------------------------------------
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const scheduleSilentRefresh = useCallback(() => {
+    if (refreshTimer.current) return;
+    refreshTimer.current = setTimeout(() => {
+      refreshTimer.current = null;
+      fetchOrders({ silent: true });
+    }, 600);
+  }, [fetchOrders]);
+
+  useEffect(
+    () => () => {
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    },
+    []
+  );
+
+  const applyRealtimeOrder = useCallback(
+    (payload: RealtimeOrderEvent) => {
+      const id = String(payload?._id ?? '');
+      if (!id) return;
+
+      const current = ordersRef.current.find((order) => order._id === id);
+      if (!current) {
+        // A new/changed order may belong anywhere in the filtered, sorted,
+        // paginated view — let the API decide.
+        scheduleSilentRefresh();
+        return;
+      }
+
+      const nextStatus = (payload.orderStatus as Order['orderStatus']) ?? current.orderStatus;
+      const nextPayment =
+        (payload.paymentStatus as Order['paymentStatus']) ?? current.paymentStatus;
+      const nextUpdated = payload.updatedAt ?? current.updatedAt;
+
+      // Nothing visible changed: no re-render and no extra request. This is
+      // what keeps a reconnect replay (or a duplicate delivery) from causing
+      // a request storm.
+      if (
+        nextStatus === current.orderStatus &&
+        nextPayment === current.paymentStatus &&
+        nextUpdated === current.updatedAt
+      ) {
+        return;
+      }
+
+      setOrders((previous) =>
+        previous.map((order) =>
+          order._id === id
+            ? { ...order, orderStatus: nextStatus, paymentStatus: nextPayment, updatedAt: nextUpdated }
+            : order
+        )
+      );
+
+      // Counters (pending/completed orders, revenue) are derived server-side, so
+      // one debounced refresh keeps them honest.
+      scheduleSilentRefresh();
+    },
+    [scheduleSilentRefresh]
+  );
+
+  useRealtimeEvent<RealtimeOrderEvent>(realtime.socket, 'order_updated', applyRealtimeOrder);
+  useRealtimeEvent<RealtimeOrderEvent>(realtime.socket, 'new_order', applyRealtimeOrder);
 
   const updateOrderStatus = async (orderId: string, newStatus: string) => {
     try {
@@ -179,7 +273,7 @@ const Orders: React.FC<OrdersProps> = ({ token }) => {
 
       if (response.data.success) {
         toast.success('Order status updated successfully');
-        fetchOrders(); // Refresh the list
+        if (!realtime.isConnected) fetchOrders();
       } else {
         toast.error('Failed to update order status');
       }
@@ -271,6 +365,43 @@ const Orders: React.FC<OrdersProps> = ({ token }) => {
           <div>
             <h1 className="text-heading-1 font-bold gradient-text mb-4">Order Management</h1>
             <p className="text-body-large text-neutral-600 font-medium">Manage and track all customer orders</p>
+            {/* Operators must be able to tell a live feed from a stale one. */}
+            <p
+              role="status"
+              aria-live="polite"
+              className={`mt-3 inline-flex items-center gap-2 text-body-small font-semibold ${
+                realtime.isConnected
+                  ? 'text-success-700'
+                  : realtime.connectionError
+                    ? 'text-error-700'
+                    : 'text-neutral-500'
+              }`}
+            >
+              <span
+                aria-hidden="true"
+                className={`inline-block h-2 w-2 rounded-full ${
+                  realtime.isConnected
+                    ? 'bg-success-500'
+                    : realtime.connectionError
+                      ? 'bg-error-500'
+                      : 'bg-neutral-400'
+                }`}
+              />
+              {realtime.isConnected
+                ? 'Live updates on'
+                : realtime.connectionError
+                  ? 'Live updates offline'
+                  : 'Connecting to live updates…'}
+              {!realtime.isConnected && !realtime.authError && (
+                <button
+                  type="button"
+                  onClick={realtime.reconnect}
+                  className="ml-2 underline underline-offset-2"
+                >
+                  Reconnect
+                </button>
+              )}
+            </p>
           </div>
           <div className="text-right">
             <p className="text-caption text-neutral-500 font-semibold mb-2">Total Orders</p>

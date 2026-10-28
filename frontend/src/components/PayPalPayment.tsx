@@ -10,6 +10,7 @@ import type {
   PayPalCreateOrderResponse,
 } from '../types';
 import { toPayPalErrorLike } from '../utils/errorUtils';
+import { backendUrl } from '../config/backend';
 
 interface PayPalPaymentProps {
   amount: number;
@@ -60,7 +61,7 @@ const PayPalPayment: React.FC<PayPalPaymentProps> = ({
       console.log('Items:', getPayPalItems());
       console.log('Address:', address);
 
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'}/api/orders/paypal/create`, {
+      const response = await fetch(`${backendUrl}/api/orders/paypal/create`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -98,7 +99,7 @@ const PayPalPayment: React.FC<PayPalPaymentProps> = ({
       setIsProcessing(true);
       console.log('🔄 Capturing PayPal payment for order:', data.orderID);
 
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'}/api/orders/paypal/capture`, {
+      const response = await fetch(`${backendUrl}/api/orders/paypal/capture`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

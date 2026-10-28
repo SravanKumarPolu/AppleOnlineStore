@@ -8,8 +8,8 @@
 //     stale og:url metadata in frontend/index.html); production origins must
 //     come from the environment instead (FRONTEND_URL / ADMIN_URL /
 //     CORS_EXTRA_ORIGINS), so a deployment explicitly chooses its origins.
-//   - Required local development origins are preserved: the Vite dev servers
-//     (frontend :5173, admin :5174) and the legacy :3000 dev port.
+//   - Local development origins (Vite :5173/:5174 and legacy :3000) are
+//     available outside production only.
 //   - Socket.IO previously allowed extra localhost ports (5175/5176/5177)
 //     that no current app uses; they are now covered by ADMIN_URL/FRONTEND_URL
 //     environment configuration when needed, keeping both CORS lists in sync.
@@ -27,7 +27,8 @@ const DEV_ORIGINS = [
  * "https://shop.example.com/" and "https://shop.example.com" both match.
  */
 export function buildAllowedOrigins(env = process.env) {
-  const origins = [...DEV_ORIGINS];
+  const isProduction = String(env.NODE_ENV || '').trim().toLowerCase() === 'production';
+  const origins = isProduction ? [] : [...DEV_ORIGINS];
 
   for (const name of ['FRONTEND_URL', 'ADMIN_URL']) {
     const value = typeof env[name] === 'string' ? env[name].trim() : '';

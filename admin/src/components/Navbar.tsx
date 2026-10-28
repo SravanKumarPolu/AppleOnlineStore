@@ -1,10 +1,10 @@
 import { assets } from '../assets/assets';
 
 interface NavbarProps {
-  setToken: React.Dispatch<React.SetStateAction<string>>;
+  onLogout: () => void;
 }
 
-const Navbar: React.FC<NavbarProps> = ({ setToken }) => {
+const Navbar: React.FC<NavbarProps> = ({ onLogout }) => {
   return (
     <header className="sticky top-0 z-50 bg-white/90 backdrop-blur-xl border-b border-neutral-200/60 shadow-lg shadow-neutral-900/5">
       <div className="flex items-center justify-between px-8 py-6">
@@ -18,7 +18,7 @@ const Navbar: React.FC<NavbarProps> = ({ setToken }) => {
             />
             <div className="hidden sm:block">
               <h2 className="text-heading-4 font-bold text-neutral-900 gradient-text mb-1">
-               Nova Cart Admin
+                NovaCart Admin
               </h2>
               <p className="text-caption text-neutral-500 font-semibold tracking-wide">
                 Management Dashboard
@@ -48,8 +48,8 @@ const Navbar: React.FC<NavbarProps> = ({ setToken }) => {
           </div>
 
           {/* Enhanced Logout Button */}
-          <button 
-            onClick={() => setToken('')} 
+          <button
+            onClick={onLogout}
             className="btn-modern btn-secondary hover:bg-error-50 hover:border-error-200 hover:text-error-700 group px-6 py-3 hover:scale-105 transition-all duration-300"
           >
             <svg className="w-5 h-5 group-hover:scale-110 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">

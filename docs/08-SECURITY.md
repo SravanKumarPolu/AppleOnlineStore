@@ -12,11 +12,12 @@
 
 ## 1. Authentication & authorization model (summary)
 
-- **Shoppers:** bcrypt(12) + JWT HS256 (7 d, `{id}`), DB-checked and
-  `isActive`-checked on every guarded request. Account lockout: 5 failed
+- **Shoppers:** bcrypt(12) + JWT HS256 (7 d, user id, token version, type,
+  unique session id), DB-checked and `isActive`-checked on every guarded
+  request. Account lockout: 5 failed
   logins → 2 h lock (HTTP 423).
 - **Admin:** env-credential login (`ADMIN_EMAIL`/`ADMIN_PASSWORD`) → 1-day
-  JWT `{email, role:'admin', type:'admin'}`. Admin email comparison trims
+  JWT `{email, role:'admin', type:'admin', jti}`. Admin email comparison trims
   surrounding whitespace and ignores case; password comparison remains exact.
   Rotating `ADMIN_PASSWORD` alone does not revoke issued admin JWTs; rotate
   `JWT_SECRET` to invalidate them. A DB user with
@@ -24,12 +25,15 @@
 - **Token transport:** custom `token` header (storefront) or
   `Authorization: Bearer` (admin analytics pages) — both accepted by both
   middleware stacks. Socket.IO handshake carries the same JWT.
-- **Two live middleware stacks** with identical semantics
-  (`middleware/auth.js` for most routers; `middleware/authMiddleware.js` for
-  analytics) and **one dead** (`middleware/adminAuth.js` — never wired).
-  Consolidation is backlog item S5/S6.
+- **One shared auth verifier** is used by HTTP and Socket.IO; it pins HS256,
+  requires expiry, validates token type and role, checks account status and
+  tokenVersion, and rejects revoked session ids.
+- `POST /api/user/logout` and `POST /api/user/admin/logout` revoke the exact
+  JWT session across all tabs using it. Password reset increments
+  `tokenVersion` and closes all live sockets for the account. Revoked session
+  ids expire from MongoDB after the JWT expiry.
 - JWTs live in `localStorage` on both frontends (XSS-exfiltration tradeoff —
-  documented decision); there is **no revocation mechanism** (S4).
+  documented decision).
 
 ## 2. Platform hardening in place (verified by tests)
 
@@ -61,7 +65,7 @@ production 500s generic · health payloads booleans-only.
 | **S8** | **Security gates were cwd-scoped to `backend/`** — `git ls-files` / `git log` / `git archive` run from `backend/` see only `backend/**` (106 of 482 tracked files), so the secret scanner, history scan and distribution gate silently ignored `frontend/`, `admin/`, `docs/` and root scripts; an archive built that way also shipped backend-only content. Caught on 2026-10-26 when a real PayPal secret was pasted into `frontend/.env.example` and the gate stayed green | ✅ **Closed 2026-10-26** — both scripts anchor at the repo toplevel; whole-repo tree + history scan clean; regression specs lock a secret in `frontend/` being caught from a `backend/` cwd and an archive containing the full tree |
 | S2 | npm audit advisories | ✅ **Re-baselined 2026-10-26** (non-mutating `npm audit`): backend **0**, admin **0**, frontend **3 moderate** — all in the build-time Tailwind 3 / PostCSS chain (`postcss-selector-parser` CPU-exhaustion), no high/critical. Remediation is the planned Tailwind 4 upgrade window; not a runtime exposure |
 | S3 | Env-based admin login, non-timing-safe plaintext compare | 📋 Plan drafted |
-| S4 | No JWT revocation; 7-day user tokens | 📋 Plan drafted |
+| S4 | No JWT revocation; 7-day user tokens | ✅ **Closed 2026-10-28** — per-session JWT ids are stored in `revokedsessions` through expiry; logout revokes across tabs, password reset increments account `tokenVersion`, and live sockets are closed immediately |
 | S5 | Dead `middleware/adminAuth.js` | ✅ **Closed** — file deleted 2026-10-25 (K-9 consolidation) |
 | S6 | Duplicated auth middleware stacks | ✅ **Closed** — single `middleware/auth.js` (`authUser`/`authAdmin`); `authMiddleware.js` deleted |
 | S7 | JWT algorithm not pinned in `jwt.verify` | ✅ **Closed 2026-10-26** — both `authUser` and `authAdmin` verify with `{ algorithms: ['HS256'] }`; the existing `alg:none` rejection case in `authenticationAttacks.spec.js` plus the auth suites (60 tests) stay green |

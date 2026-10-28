@@ -214,7 +214,14 @@ describe('brute force & lockout', () => {
     const res = await request(app)
       .post('/api/user/forgot-password')
       .send({ email: 'ghost-nobody@example.com' });
-    expect(res.status).toBe(200);
+
+    // 202 Accepted is the documented contract: the request is accepted and an
+    // SMTP handoff is attempted, so neither delivery nor account existence can
+    // be inferred from the status. Parity between unknown / known / inactive
+    // accounts is asserted in passwordResetEmail.spec.js (same status, same
+    // body) — this test guards the wording on the unknown-account path.
+    expect(res.status).toBe(202);
+    expect(res.body.success).toBe(true);
     expect(res.body.message).not.toMatch(/not found|no user|doesn't exist/i);
   });
 });

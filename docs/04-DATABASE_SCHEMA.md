@@ -12,7 +12,7 @@
 
 ## 1. Overview
 
-7 model files register **11 models** → 11 collections. Two fields conventions
+8 model files register **12 models** → 12 collections. Two fields conventions
 apply across all schemas: `timestamps: true` adds `createdAt`/`updatedAt`;
 Mongoose adds `_id` (ObjectId) and `__v` unless suppressed. Model names with
 an explicit `collection` option are noted.
@@ -29,6 +29,7 @@ an explicit `collection` option are noted.
 | `SalesAnalytics` (analyticsModel.js) | `salesanalytics` | Pre-aggregated daily sales | 🪦 no runtime writer |
 | `ProductPerformance` (analyticsModel.js) | `productperformances` | Per-product funnel metrics | Live |
 | `SearchAnalytics` (analyticsModel.js) | `searchanalytics` | Query popularity | Live |
+| `revokedSession` (revokedSessionModel.js) | `revokedsessions` | Revoked JWT session ids, retained through token expiry | Live |
 
 ## 2. `users`
 
@@ -227,6 +228,8 @@ controllers.
 
 ## 10. Data lifecycle notes (honest gaps)
 
+- **TTL cleanup** — `revokedsessions` has an `expiresAt` TTL index so revoked
+  JWT ids are removed after the token can no longer be used.
 - **No TTL indexes** — `useractivities`, `webhookevents`, and
   `searchanalytics` grow unboundedly; retention/cleanup is a manual ops task
   (an admin `POST /api/analytics/cleanup` endpoint exists for orphaned
