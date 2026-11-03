@@ -335,6 +335,48 @@ describe('Orders page (live updates)', () => {
     expect(screen.getAllByText('Shipped').some((el) => el.tagName === 'SPAN')).toBe(false);
   });
 
+  it('does not let a pending API response overwrite a newer realtime status', async () => {
+    let resolveRefresh!: (response: Response) => void;
+    renderLive();
+    await screen.findByText('Order #88776655');
+
+    fetchMock.mockImplementationOnce(
+      () => new Promise<Response>((resolve) => {
+        resolveRefresh = resolve;
+      })
+    );
+    act(() => socket.trigger('connect'));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const staleRequest = fetchMock.mock.calls[1][1];
+
+    act(() => {
+      socket.trigger('order_updated', {
+        _id: order._id,
+        eventId: 'evt-newer-state',
+        type: 'order_updated',
+        orderStatus: 'Out for delivery',
+        paymentStatus: 'pending',
+        updatedAt: '2026-10-02T10:00:00.000Z',
+      });
+    });
+    expect(staleRequest.signal.aborted).toBe(true);
+
+    await act(async () => {
+      resolveRefresh(
+        await jsonResponse({
+          success: true,
+          orders: [{ ...order, orderStatus: 'Shipped' }],
+          pagination: { currentPage: 1, totalPages: 2, totalOrders: 2 },
+        })
+      );
+    });
+
+    expect(
+      screen.getAllByText('Out for delivery').some((element) => element.tagName === 'SPAN'),
+    ).toBe(true);
+    expect(screen.getAllByText('Shipped').some((element) => element.tagName === 'SPAN')).toBe(false);
+  });
+
   it('aborts pending order requests when the page unmounts', async () => {
     fetchMock.mockImplementation(() => new Promise(() => undefined));
     const { unmount } = renderLive();

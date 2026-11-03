@@ -138,7 +138,10 @@ Flow notation: `storefront` = `frontend/`, `admin` = `admin/`, `API` =
 2. Realtime: the storefront's `useWebSocket` connects with the auth token;
    server authenticates the handshake and joins room `user_<id>`. Every
    authenticated connection or reconnection triggers an authorized order-list
-   refresh, reconciling updates missed while the shopper was offline.
+   refresh, reconciling updates missed while the shopper was offline. If the
+   bounded Socket.IO retry budget expires offline, the browser's `online` event
+   restarts the token-authenticated connection; remembered order-room joins
+   are replayed and reauthorized.
 3. Admin order changes emit minimal `order_updated` state notifications
    (including `type:'payment_update'` for payment changes); new orders emit a
    minimal `new_order` notice. The admin list and customer Orders page patch

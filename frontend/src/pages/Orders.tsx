@@ -186,6 +186,15 @@ const Orders: React.FC = () => {
       const id = String(payload?._id ?? '');
       if (!id) return;
 
+      // A request started before this event can return afterward with older
+      // order data. Invalidate it before patching the event's newer state.
+      if (activeRequestRef.current) {
+        requestIdRef.current += 1;
+        activeRequestRef.current.abort();
+        activeRequestRef.current = null;
+        setLoading(false);
+      }
+
       const currentOrder = ordersRef.current.find((order) => order._id === id);
       if (!currentOrder) {
         // An update to an off-page order can change filtered results,

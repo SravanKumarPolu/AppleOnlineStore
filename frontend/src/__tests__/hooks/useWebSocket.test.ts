@@ -220,6 +220,7 @@ describe('useWebSocket', () => {
     // A manual reconnect is refused while the session is known to be invalid.
     act(() => {
       result.current.reconnect();
+      window.dispatchEvent(new Event('online'));
     });
     expect(socket.connect).not.toHaveBeenCalled();
   });
@@ -240,6 +241,40 @@ describe('useWebSocket', () => {
       result.current.reconnect();
     });
     expect(socket.connect).toHaveBeenCalled();
+  });
+
+  it('restarts the authenticated socket once when the browser comes back online', () => {
+    const { result, rerender } = renderHook(
+      ({ tick }: { tick: number }) => useWebSocket({
+        token: 'jwt-token',
+        userId: 'user-1',
+        onOrderUpdate: () => tick,
+      }),
+      { initialProps: { tick: 1 } },
+    );
+    const socket = mocks.created[0];
+    act(() => result.current.joinOrderRoom('order-1'));
+
+    act(() => {
+      window.dispatchEvent(new Event('offline'));
+      socket.trigger('disconnect', 'transport close');
+    });
+    expect(result.current.isConnected).toBe(false);
+    expect(result.current.connectionError).toBe('Browser is offline');
+    expect(socket.disconnect).toHaveBeenCalledTimes(1);
+
+    // Renders must not add another pair of global listeners.
+    rerender({ tick: 2 });
+    act(() => window.dispatchEvent(new Event('online')));
+
+    expect(socket.connect).toHaveBeenCalledTimes(1);
+    expect(socket.disconnect).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      socket.connected = true;
+      socket.trigger('connect');
+    });
+    expect(socket.emit).toHaveBeenCalledWith('join_order_room', 'order-1');
   });
 
   it('closes the feed and reports the reason when the server revokes the session', () => {

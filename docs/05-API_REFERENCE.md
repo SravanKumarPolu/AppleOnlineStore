@@ -181,9 +181,13 @@ HTTP HS256 verifier, checks expiry/account state/tokenVersion and revoked
 session ids, and revalidates long-lived sockets periodically. Rooms:
 `user_<id>` (shopper sockets), `admin_room` (admin-role sockets),
 `order_<id>` (ownership-checked for shoppers; admin-only otherwise).
-The storefront refreshes the authenticated order list on each successful
-socket connection/reconnection; clients must treat realtime state events as
-notifications, not a durable event log.
+Each successful connection reauthenticates and restores the server-assigned
+shopper room; the storefront replays its remembered order-room joins, which
+the server authorizes again. If Socket.IO's bounded retry budget expires while
+the browser is offline, the storefront restarts the connection on the browser's
+`online` event. It refreshes the authenticated order list after every successful
+connection/reconnection, so clients must treat realtime state events as
+notifications, not a durable event log. Manual Reconnect remains available.
 
 | Direction | Event | Payload / notes |
 |---|---|---|

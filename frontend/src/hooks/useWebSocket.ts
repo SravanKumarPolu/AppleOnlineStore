@@ -306,6 +306,33 @@ export const useWebSocket = ({
     };
   }, [token, connect, disconnect]);
 
+  // Socket.IO's bounded retry budget can expire while the browser is offline.
+  // Restart the same authenticated socket when connectivity returns; its next
+  // handshake revalidates the token and the connect handler restores rooms.
+  useEffect(() => {
+    if (!token || typeof window === 'undefined') return undefined;
+
+    const handleOffline = () => {
+      setIsConnected(false);
+      setConnectionError('Browser is offline');
+      // Stop Socket.IO's scheduled retries while the browser cannot reach the
+      // network. The same socket and listeners are reused on the online event.
+      socketRef.current?.disconnect();
+    };
+
+    const handleOnline = () => {
+      if (authFailedRef.current) return;
+      reconnect();
+    };
+
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
+    return () => {
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [token, reconnect]);
+
   return {
     isConnected,
     connectionError,
