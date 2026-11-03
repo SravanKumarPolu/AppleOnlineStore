@@ -181,6 +181,9 @@ HTTP HS256 verifier, checks expiry/account state/tokenVersion and revoked
 session ids, and revalidates long-lived sockets periodically. Rooms:
 `user_<id>` (shopper sockets), `admin_room` (admin-role sockets),
 `order_<id>` (ownership-checked for shoppers; admin-only otherwise).
+The storefront refreshes the authenticated order list on each successful
+socket connection/reconnection; clients must treat realtime state events as
+notifications, not a durable event log.
 
 | Direction | Event | Payload / notes |
 |---|---|---|

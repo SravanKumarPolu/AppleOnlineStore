@@ -61,6 +61,10 @@ const Orders: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [selectedStatus, setSelectedStatus] = useState<string>('');
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const requestIdRef = useRef(0);
+  const activeRequestRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
 
   // Latest list without re-subscribing the socket on every render.
   const ordersRef = useRef<Order[]>(orders);
@@ -68,11 +72,27 @@ const Orders: React.FC = () => {
     ordersRef.current = orders;
   }, [orders]);
 
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      requestIdRef.current += 1;
+      activeRequestRef.current?.abort();
+      activeRequestRef.current = null;
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    };
+  }, []);
+
   const fetchOrders = useCallback(
     async ({ silent = false }: { silent?: boolean } = {}) => {
+      activeRequestRef.current?.abort();
+      const controller = new AbortController();
+      const requestId = ++requestIdRef.current;
+      activeRequestRef.current = controller;
+
       try {
         // A background refresh must not unmount the list behind a spinner.
-        if (!silent) setLoading(true);
+        if (!silent && mountedRef.current) setLoading(true);
         const response = await fetch(`${backendUrl}/api/orders/userorders`, {
           method: 'POST',
           headers: {
@@ -84,9 +104,18 @@ const Orders: React.FC = () => {
             limit: 10,
             status: selectedStatus || undefined
           }),
+          signal: controller.signal,
         });
 
         const data = await response.json();
+
+        if (
+          controller.signal.aborted ||
+          requestId !== requestIdRef.current ||
+          !mountedRef.current
+        ) {
+          return;
+        }
 
         if (data.success) {
           setOrders(data.orders);
@@ -95,10 +124,19 @@ const Orders: React.FC = () => {
           toast.error(data.message || 'Failed to fetch orders');
         }
       } catch (error) {
-        console.error('Error fetching orders:', error);
-        if (!silent) toast.error('Failed to fetch orders');
+        if (
+          !controller.signal.aborted &&
+          requestId === requestIdRef.current &&
+          mountedRef.current
+        ) {
+          console.error('Error fetching orders:', error);
+          if (!silent) toast.error('Failed to fetch orders');
+        }
       } finally {
-        if (!silent) setLoading(false);
+        if (requestId === requestIdRef.current && mountedRef.current) {
+          activeRequestRef.current = null;
+          setLoading(false);
+        }
       }
     },
     [token, currentPage, selectedStatus]
@@ -110,6 +148,15 @@ const Orders: React.FC = () => {
       return;
     }
     fetchOrders();
+    return () => {
+      requestIdRef.current += 1;
+      activeRequestRef.current?.abort();
+      activeRequestRef.current = null;
+      if (refreshTimer.current) {
+        clearTimeout(refreshTimer.current);
+        refreshTimer.current = null;
+      }
+    };
   }, [isLoggedIn, navigate, fetchOrders]);
 
   // ---------------------------------------------------------------------
@@ -119,8 +166,6 @@ const Orders: React.FC = () => {
   // list was created and this view is the unfiltered first page — debounced, so
   // a burst of events triggers a single request.
   // ---------------------------------------------------------------------
-  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   const scheduleSilentRefresh = useCallback(() => {
     if (refreshTimer.current) return;
     refreshTimer.current = setTimeout(() => {
@@ -187,6 +232,10 @@ const Orders: React.FC = () => {
   );
 
   useRealtimeEvent(webSocket.socket, 'order_updated', applyRealtimeUpdate);
+  const reconcileOrders = useCallback(() => {
+    void fetchOrders({ silent: true });
+  }, [fetchOrders]);
+  useRealtimeEvent<void>(webSocket.socket, 'connect', reconcileOrders);
 
   const getStatusColor = (status: string) => {
     switch (status) {

@@ -257,6 +257,95 @@ describe('Orders page (live updates)', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('reconciles an order changed while offline after the socket reconnects', async () => {
+    let serverOrder = { ...order, orderStatus: 'Shipped' };
+    fetchMock.mockImplementation(() =>
+      jsonResponse({
+        success: true,
+        orders: [serverOrder],
+        pagination: { currentPage: 1, totalPages: 2, totalOrders: 2 },
+      })
+    );
+    renderLive();
+    await screen.findByText('Shipped');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // The status changes on the server while the shopper is offline, so no
+    // order_updated event reaches this page.
+    serverOrder = { ...serverOrder, orderStatus: 'Out for delivery' };
+    act(() => socket.trigger('connect'));
+
+    await waitFor(() => {
+      expect(
+        screen.getAllByText('Out for delivery').some((el) => el.tagName === 'SPAN')
+      ).toBe(true);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('ignores a stale response when a reconnect refresh supersedes the initial request', async () => {
+    let resolveInitial!: (response: Response) => void;
+    let resolveReconnect!: (response: Response) => void;
+    fetchMock
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveInitial = resolve;
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveReconnect = resolve;
+          })
+      );
+    renderLive();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const initialRequest = fetchMock.mock.calls[0][1];
+
+    act(() => socket.trigger('connect'));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(initialRequest.signal.aborted).toBe(true);
+
+    await act(async () => {
+      resolveReconnect(
+        await jsonResponse({
+          success: true,
+          orders: [{ ...order, orderStatus: 'Out for delivery' }],
+          pagination: { currentPage: 1, totalPages: 2, totalOrders: 2 },
+        })
+      );
+    });
+    expect(
+      (await screen.findAllByText('Out for delivery')).some((el) => el.tagName === 'SPAN')
+    ).toBe(true);
+
+    await act(async () => {
+      resolveInitial(
+        await jsonResponse({
+          success: true,
+          orders: [{ ...order, orderStatus: 'Shipped' }],
+          pagination: { currentPage: 1, totalPages: 2, totalOrders: 2 },
+        })
+      );
+    });
+    expect(
+      screen.getAllByText('Out for delivery').some((el) => el.tagName === 'SPAN')
+    ).toBe(true);
+    expect(screen.getAllByText('Shipped').some((el) => el.tagName === 'SPAN')).toBe(false);
+  });
+
+  it('aborts pending order requests when the page unmounts', async () => {
+    fetchMock.mockImplementation(() => new Promise(() => undefined));
+    const { unmount } = renderLive();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const request = fetchMock.mock.calls[0][1];
+
+    unmount();
+
+    expect(request.signal.aborted).toBe(true);
+  });
+
   it('reflects a payment change and a pending refund', async () => {
     renderLive();
     await screen.findByText('Order #88776655');
