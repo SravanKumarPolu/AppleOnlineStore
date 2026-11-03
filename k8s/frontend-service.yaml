@@ -1,0 +1,19 @@
+
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: frontend
+  namespace: novacart
+
+spec:
+  type: ClusterIP
+
+  selector:
+    app: novacart-frontend
+
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8080
+      targetPort: 8080

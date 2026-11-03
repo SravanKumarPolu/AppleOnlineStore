@@ -1,0 +1,32 @@
+
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: novacart-backend
+  namespace: novacart
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: novacart-backend
+
+  template:
+    metadata:
+      labels:
+        app: novacart-backend
+
+    spec:
+      containers:
+        - name: backend
+          image: novacart-backend:v2
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - containerPort: 3001
+
+          envFrom:
+            - secretRef:
+                name: novacart-backend-env

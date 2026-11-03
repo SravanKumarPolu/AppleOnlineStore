@@ -1,0 +1,30 @@
+
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: novacart-frontend
+  namespace: novacart
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: novacart-frontend
+
+  template:
+    metadata:
+      labels:
+        app: novacart-frontend
+
+    spec:
+      containers:
+        - name: frontend
+          image: novacart-frontend:v3
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
