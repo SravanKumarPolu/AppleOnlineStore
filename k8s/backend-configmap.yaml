@@ -1,0 +1,12 @@
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: novacart-backend-config
+  namespace: novacart
+
+data:
+  PORT: "3001"
+  NODE_ENV: "development"
+  CORS_EXTRA_ORIGINS: "http://localhost:8080,http://localhost:8081,http://shop.novacart.localhost:8090,http://admin.novacart.localhost:8090"
+  PAYPAL_ENV: "sandbox"

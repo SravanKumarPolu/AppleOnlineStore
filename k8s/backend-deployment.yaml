@@ -7,8 +7,6 @@ metadata:
   namespace: novacart
 
 spec:
-  replicas: 1
-
   selector:
     matchLabels:
       app: novacart-backend
@@ -24,12 +22,22 @@ spec:
           image: novacart-backend:v3
           imagePullPolicy: IfNotPresent
 
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
           ports:
             - containerPort: 3001
 
           envFrom:
             - secretRef:
                 name: novacart-backend-env
+            - configMapRef:
+                name: novacart-backend-config
 
           startupProbe:
             httpGet:
