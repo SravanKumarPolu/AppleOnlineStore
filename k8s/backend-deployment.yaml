@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: novacart-backend:v2
+          image: novacart-backend:v3
           imagePullPolicy: IfNotPresent
 
           ports:
@@ -30,3 +30,27 @@ spec:
           envFrom:
             - secretRef:
                 name: novacart-backend-env
+
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: 3001
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 24
+
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 3001
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 3001
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3

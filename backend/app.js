@@ -30,6 +30,10 @@ import addressRouter from './routes/addressRoute.js';
 
 const app = express();
 
+// Trust one reverse-proxy hop in the local Kubernetes deployment.
+// Do not enable this for arbitrary direct client connections.
+app.set('trust proxy', 1);
+
 // ---------------------------------------------------------------------------
 // Drain flag — flipped by the shutdown manager. While shutting down, new
 // non-health requests are rejected with 503 so load balancers can reroute.
