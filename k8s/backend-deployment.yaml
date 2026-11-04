@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: novacart-backend:v3
+          image: novacart-backend:v4
           imagePullPolicy: IfNotPresent
 
           resources:
