@@ -123,7 +123,15 @@ async function startServer() {
       intervalMs: Number(process.env.RESERVATION_SWEEP_INTERVAL_MS) || DEFAULT_SWEEP_INTERVAL_MS,
     });
     await connectCloudinary();  // config-only call, kept after DB per original order
-    socketService.initialize(server);
+    // Redis adapter (when configured) must be ready BEFORE the process starts
+    // accepting Socket.IO traffic. initialize() resolves only then; when the
+    // adapter is required and unreachable it throws and startup exits 1.
+    await socketService.initialize(server);
+    const realtime = socketService.getRealtimeStatus();
+    console.log(
+      `🔌 Realtime mode: ${realtime.mode}` +
+        (realtime.redis.enabled ? ` → ${realtime.redis.target}` : ' (in-process)')
+    );
 
     await new Promise((resolve, reject) => {
       server.once('error', reject);

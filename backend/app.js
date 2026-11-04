@@ -182,13 +182,25 @@ app.get('/health/ready', (req, res) => {
   if (isShuttingDown()) {
     return res.status(503).json({
       status: 'not ready',
-      checks: { database: mongoose.connection.readyState === 1, shuttingDown: true },
+      checks: {
+        database: mongoose.connection.readyState === 1,
+        shuttingDown: true,
+        realtime: socketService.getRealtimeMode(),
+      },
     });
   }
   const databaseReady = mongoose.connection.readyState === 1; // 1 === connected
+  const realtime = socketService.getRealtimeMode();
+  // Redis-degraded does NOT fail readiness: local sockets still work and REST
+  // is unaffected. The mode is reported honestly so an operator can see that
+  // cross-pod delivery is NOT available. Readiness stays 200 unless the DB is
+  // down or the process is draining.
   const payload = {
     status: databaseReady ? 'ready' : 'not ready',
-    checks: { database: databaseReady },
+    checks: {
+      database: databaseReady,
+      realtime,
+    },
   };
   res.status(databaseReady ? 200 : 503).json(payload);
 });
@@ -200,10 +212,16 @@ app.get('/health', (req, res) => {
 
 // WebSocket info
 app.get('/api/socket/status', (req, res) => {
+  const realtime = socketService.getRealtimeStatus();
   res.json({
     success: true,
     connectedUsers: socketService.getConnectedUsersCount(),
     status: 'WebSocket server is running',
+    realtime: {
+      mode: realtime.mode,
+      transports: realtime.transports,
+      redisEnabled: realtime.redis.enabled,
+    },
   });
 });
 

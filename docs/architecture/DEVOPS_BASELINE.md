@@ -71,7 +71,12 @@
 2. **Secrets management**: external secret store for `JWT_SECRET`, `ADMIN_EMAIL`/`ADMIN_PASSWORD`, `MONGODB_URI`, `PAYPAL_CLIENT_ID`/`SECRET`/`WEBHOOK_ID`, `SMTP_*`, `CLOUDINARY_*`, `FRONTEND_URL`/`ADMIN_URL`. Rotation runbook: `docs/devops/07-CREDENTIAL-ROTATION-RUNBOOK.md`.
 3. **TLS termination** in front of the API and the static hosts (CORS origins must then be the public HTTPS origins).
 4. **Orchestration**: liveness probe `/health/live`, readiness probe `/health/ready`, `SIGTERM`-honoring termination grace ≥ `SHUTDOWN_TIMEOUT_MS` (default 10 s).
-5. **Multi-replica consideration**: Socket.IO uses the in-memory adapter — sticky sessions or a Redis adapter is required before scaling to > 1 backend replica (room membership and the connected-users map are per-process).
+5. **Multi-replica consideration**: Socket.IO uses the in-process adapter unless
+   a Redis target is configured, in which case `@socket.io/redis-adapter` is
+   attached after both ioredis clients are ready. Without it, room membership,
+   presence and cross-instance revocation are per-process — run exactly one
+   backend replica. With it, choose WebSocket-only transport or session
+   affinity for HTTP long-polling. See `docs/06-DEPLOYMENT.md` §8.
 6. **Managed MongoDB** with the `e-commerce` database (or a complete URI pointing at the chosen database) + backups. Connection string must be passed complete or as a bare host (the resolver applies the default db).
 7. **CI/CD pipeline** running the quality-gate commands above on every PR; blocking on any FAIL.
 8. **Log aggregation + alerting** keyed on the `PAYMENT WEBHOOK ALERT` lines and the shutdown-forced-exit log.

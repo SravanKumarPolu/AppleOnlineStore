@@ -72,7 +72,56 @@ connected-user count.
 - All emitters are null-safe: if realtime is down/uninitialized, order flows
   still succeed (this fixed a real 500-on-status-update bug).
 - `socketService.close()` is part of the shutdown order — no orphaned
-  sockets across restarts.
+  sockets across restarts. It also `quit()`s + disconnects both Redis
+  adapter clients.
+- **Adapter mode is visible:** `GET /health/ready` → `checks.realtime`:
+  `memory` (no Redis configured — one replica only), `redis` (both pub/sub
+  clients ready), `degraded` (configured but currently unreachable),
+  `uninitialized` (before startup completes). Never treat `degraded` as
+  distributed delivery.
+- **Boot fails closed in production** when Redis is configured and
+  unreachable (`SOCKETIO_REDIS_REQUIRED` defaults true there). In
+  development it falls back to in-process delivery and logs a loud warning.
+- **Multi-replica transport choice:** either `SOCKETIO_TRANSPORTS=websocket`
+  or session affinity on the backend Service. Plain round-robin polling will
+  handshake on one pod and long-poll on another. If you keep polling, the
+  Service must pin a client for the whole handshake + long-poll sequence:
+
+  ```yaml
+  apiVersion: v1
+  kind: Service
+  metadata:
+    name: backend
+    namespace: novacart
+  spec:
+    type: ClusterIP
+    sessionAffinity: ClientIP
+    sessionAffinityConfig:
+      clientIP:
+        timeoutSeconds: 10800
+    selector:
+      app: novacart-backend
+    ports:
+      - name: http
+        port: 3001
+        targetPort: 3001
+  ```
+
+  WebSocket-only is the simpler choice when the proxy layer cannot promise
+  affinity. Existing storefront/admin clients already try `websocket` first,
+  so compatibility is preserved either way.
+- **During a Redis outage** adapter publishes queue in memory (ioredis
+  `enableOfflineQueue`) and flush on reconnect; health reports `degraded`, and
+  events are notifications only — clients refetch state after reconnecting.
+  Cross-instance revocation events are skipped while degraded, but each pod's
+  periodic revalidation still closes sockets whose session was revoked.
+- **Redis is not a cache here.** It carries adapter broadcasts and
+  cross-instance revocation events; anyone with `PUBLISH` access could inject
+  either. Keep it ClusterIP/private, use AUTH + TLS in production, and never
+  expose it through an Ingress.
+- Local kind fixtures: `k8s/redis-deployment.yaml`,
+  `k8s/redis-service.yaml`; production requirements:
+  [06-DEPLOYMENT.md](./06-DEPLOYMENT.md) §8.
 
 ## 5. PayPal webhook operations runbook
 

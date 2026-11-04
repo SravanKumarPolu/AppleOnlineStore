@@ -1,0 +1,100 @@
+# Local Redis for the Socket.IO multi-replica adapter.
+#
+# This manifest is for LOCAL kind testing only:
+#   - no AUTH, no TLS, no persistence (emptyDir)
+#   - reachable only through the ClusterIP Service (k8s/redis-service.yaml)
+#
+# PRODUCTION IS DIFFERENT — see docs/06-DEPLOYMENT.md §9. A managed/HA Redis
+# with AUTH, TLS, backups and monitoring is required there; this file must
+# never be applied to production.
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: novacart-redis
+  namespace: novacart
+  labels:
+    app: novacart-redis
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: novacart-redis
+
+  template:
+    metadata:
+      labels:
+        app: novacart-redis
+
+    spec:
+      # Local-only hardening: the official image runs as uid 999 by default.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: redis
+          image: redis:7.4-alpine
+          imagePullPolicy: IfNotPresent
+
+          # Local dev policy: ephemeral data, no snapshotting. A pod restart
+          # drops pub/sub state, which is acceptable because Socket.IO
+          # clients reconnect and re-join their rooms.
+          args:
+            - redis-server
+            - --save
+            - ""
+            - --appendonly
+            - "no"
+            - --maxmemory
+            - 128mb
+            - --maxmemory-policy
+            - noeviction
+
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+
+          resources:
+            requests:
+              cpu: "25m"
+              memory: "64Mi"
+            limits:
+              cpu: "250m"
+              memory: "192Mi"
+
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+          volumeMounts:
+            - name: data
+              mountPath: /data
+
+      volumes:
+        - name: data
+          emptyDir: {}

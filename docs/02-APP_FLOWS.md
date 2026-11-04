@@ -260,7 +260,7 @@ process safety nets (uncaughtException → exit 1, unhandledRejection → log)
        WARN : sandbox in prod · live in non-prod · missing admin creds …
   → connectDB (fail-fast, redacted log)         (config/mongodb.js)
   → connectCloudinary                           (config/cloudinary.js)
-  → socketService.initialize(server)            (same HTTP server)
+  → await socketService.initialize(server)       (same HTTP server; waits for Redis adapter when configured)
   → listen 0.0.0.0:$PORT
 ```
 

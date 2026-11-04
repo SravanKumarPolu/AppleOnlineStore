@@ -5,7 +5,7 @@
 > [docs/10-FINAL-STABILIZATION-REPORT.md](./10-FINAL-STABILIZATION-REPORT.md);
 > the preserved pre-fix baseline is
 > [devops/00-PRE-DEVOPS-QUALITY-BASELINE.md](./devops/00-PRE-DEVOPS-QUALITY-BASELINE.md)).
-> Current: **backend 43 suites / 449 tests PASS · frontend 25 files / 142
+> Current (2026-11-04): **backend 47 suites / 534 tests PASS · frontend 25 files / 142
 > tests PASS · admin 13 files / 71 tests PASS · storefront E2E 3 spec files /
 > 18 tests × Chromium/Firefox/WebKit = 54 PASS (real browsers vs the real
 > backend; re-executed 2026-10-27 after the customer-auth hardening).** This
@@ -46,7 +46,7 @@ security decision and DB write executes for real.
 | `healthEndpoints.spec.js` | 8 | live/ready/legacy semantics; ready 503 during drain while DB connected; secret-free payloads |
 | `gracefulShutdown.spec.js` | 12 | Ordered teardown; idempotent signals; hanging closers bounded; whole-lifecycle budget; onForceExit once; clean shutdown never forced |
 | `startupShutdown.integration.spec.js` | 2 | Real `node server.js` child: readiness 503→200; SIGTERM → exit 0; canary secret never in output; unreachable DB → exit 1 |
-| `startupValidation.spec.js` | 13 | Env-selector matrix; fatal/warning escalation matrix; placeholder detection; value-leak check; guardrails wired before `connectDB` |
+| `startupValidation.spec.js` | 14 | Env-selector matrix; fatal/warning escalation matrix; production-without-Redis single-replica warning; placeholder detection; value-leak check; guardrails wired before `connectDB` |
 | `loggingRedaction.spec.js` | 17 | URI/error/text redaction (incl. Bearer/JWT shapes); global error handler direct invocation; canary integration against unreachable DB |
 | `orderPaymentMethods.spec.js` | 7 | **K-1 fix:** COD + Card orders persist via `POST /api/orders` (`paymentStatus:'pending'`, totals, cart cleared, order linked to user); non-whitelisted methods (`stripe`, `cod`, `Paypal`) → 400 with nothing persisted; 401 unauthenticated |
 | `passwordResetEmail.spec.js` | 3 | **K-4 fix:** controller calls `sendPasswordResetEmail(email, name, resetToken)` (no token in the greeting slot, no URL in the token slot); unknown email stays 200 without a send; rendered email greets by name with a working `FRONTEND_URL`-based link |
@@ -62,7 +62,7 @@ security decision and DB write executes for real.
 ### 1b. Additional backend suites (present since the 2026-10-24/25 passes; verified 2026-10-26)
 
 The table in §1 lists only the suites that existed when this file was first
-written. The suite has since grown to **42 spec files / 416 tests**; the
+written. The suite has since grown to **47 spec files / 534 tests** (2026-11-04); the
 remainder are:
 
 | Spec | Focus |
@@ -85,6 +85,8 @@ remainder are:
 | `refundWorkflow.spec.js` | **15** — authz; full/partial rules; atomic refund claim (concurrent requests issue exactly one gateway refund); `PENDING` → 202 + not refunded; timeout → reconcilable `pending` + retry blocked; definitive 4xx → `failed` + safe retry; signed `PAYMENT.CAPTURE.REFUNDED` completes/failed/mismatch, duplicate does not double-credit stock |
 | `reservationExpiry.spec.js` | **25** — TTL; expired hold released once; live/COD/paid untouched; late capture after cancellation; **failed product credit stays owed and is retried**; multi-item at-most-once; deleted product settles; **crash after the product credit but before the order marker does not double-credit**; two concurrent workers credit once; ledger hidden from the product API; capture refused pre-flight and across an in-flight cancel. **K-21 (creation-time) cases:** grace window respected; crash before any debit; crash after a partial debit (only that line credited); crash after all debits before the commit; committed holds never released; two racing sweeps credit once; failed credit keeps the draft and retries; debit ledger hidden from the product API; a real checkout commits + records its marker; an unreservable checkout leaves no order; the same debit released twice credits once |
 | `socketRealtime.spec.js` | **7** — real server↔client: shopper + admin delivery, anonymous/invalid token refused, reconnect, populated-user update, **foreign order-room join refused**, two-tab disconnect keeps registration |
+| `redisConfig.spec.js` | **19** — Redis target resolution (`REDIS_URL` / discrete parts / rediss TLS), credential-safe summaries and redaction, production-required default, adapter-key/timeout defaults, transport selection (`websocket,polling` vs `websocket`) |
+| `socketRedisAdapter.spec.js` | **20** — two real `SocketService` instances + real `@socket.io/redis-adapter` over an in-process RESP server: cross-instance `new_order`/`order_updated`, delivery after a client reconnect, **exactly one** event for a socket in user+order rooms, cross-instance `revokeToken`/`revokeUserSessions`, foreign-room refusal with the adapter on, required-but-unreachable fail-closed, optional fallback to `memory`, `degraded` → `redis` recovery, local delivery while Redis is down, idempotent initialization (no second client pair), `close()` quits both clients, health/status reporting |
 | `secretScanner.spec.js` | **7** — fixture paths cannot hide real assignments; credential-shaped patterns never waived; placeholders/credential-less URIs ignored |
 | `sandboxScriptSafety.spec.js` | **2** — `--create` / `--capture` refuse to run with `PAYPAL_ENV=live` (exit 2, no request) |
 | `distributionArchive.spec.js` | **8** — archive policy: `.env`/keys/logs/build dirs rejected, clean tree passes, ZIP only via `git archive` after validation, dirty tree refused, values never printed |

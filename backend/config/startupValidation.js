@@ -108,6 +108,20 @@ export function validateRuntimeConfig({
   flag('ADMIN_EMAIL', env.ADMIN_EMAIL, 'admin panel login is unavailable');
   flag('ADMIN_PASSWORD', env.ADMIN_PASSWORD, 'admin panel login is unavailable');
 
+  // --- Realtime fan-out -----------------------------------------------------
+  // A production process with no Redis target can only serve ONE replica.
+  // Scaling it (HPA > 1) silently loses events across pods, so make the
+  // constraint visible at boot instead of discovering it in production.
+  const redisConfigured =
+    (typeof env.REDIS_URL === 'string' && env.REDIS_URL.trim() !== '') ||
+    (typeof env.REDIS_HOST === 'string' && env.REDIS_HOST.trim() !== '');
+  if (isProduction && !redisConfigured) {
+    warnings.push(
+      'NODE_ENV=production without REDIS_URL/REDIS_HOST — Socket.IO uses IN-PROCESS delivery. ' +
+        'Run exactly ONE backend replica or realtime events will be lost across pods.'
+    );
+  }
+
   // --- Environment agreement (explicit choice required) --------------------
   if (isProduction && !live) {
     warnings.push(

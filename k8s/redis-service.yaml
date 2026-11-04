@@ -1,0 +1,26 @@
+# ClusterIP-only Service for the local Redis adapter.
+#
+# No NodePort / LoadBalancer / Ingress / HTTPRoute: Redis must never be
+# reachable from outside the cluster. The backend reaches it at:
+#   redis://novacart-redis.novacart.svc.cluster.local:6379
+# (or simply redis://novacart-redis:6379 from the same namespace).
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: novacart-redis
+  namespace: novacart
+  labels:
+    app: novacart-redis
+
+spec:
+  type: ClusterIP
+
+  selector:
+    app: novacart-redis
+
+  ports:
+    - name: redis
+      protocol: TCP
+      port: 6379
+      targetPort: redis

@@ -56,6 +56,7 @@ const HEALTHY_ENV = {
   JWT_SECRET: 'a-real-64-character-secret-that-is-definitely-not-a-template-value-1234567890',
   ADMIN_EMAIL: 'owner@novacart.example',
   ADMIN_PASSWORD: 'a-real-admin-password',
+  REDIS_URL: 'rediss://redis.internal:6380/0',
 };
 
 function withOverrides(overrides) {
@@ -141,6 +142,15 @@ describe('config/startupValidation — escalation matrix', () => {
     expect(report.fatal).toEqual([]);
     expect(report.warnings.some((w) => w.includes('PAYPAL_CLIENT_ID'))).toBe(true);
     expect(report.warnings.some((w) => w.includes('PAYPAL_WEBHOOK_ID'))).toBe(true);
+  });
+
+  it('WARNING: production without a Redis target is surfaced as a single-replica constraint', () => {
+    const report = validateRuntimeConfig({
+      env: withOverrides({ REDIS_URL: undefined, REDIS_HOST: undefined }),
+    });
+    expect(report.fatal).toEqual([]);
+    expect(report.warnings.some((w) => w.includes('IN-PROCESS delivery'))).toBe(true);
+    expect(report.warnings.join(' ')).not.toMatch(/redis:\/\//);
   });
 
   it('WARNING: NODE_ENV=production without PAYPAL_ENV=live is surfaced as an explicit choice', () => {

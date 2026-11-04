@@ -38,6 +38,7 @@
   "description": "Enhanced E-commerce Backend with Analytics, Social Login, and Advanced Features",
   "dependencies": {
     "@paypal/checkout-server-sdk": "^1.0.3",
+    "@socket.io/redis-adapter": "^8.3.0",
     "bcrypt": "^6.0.0",
     "cloudinary": "^2.6.0",
     "compression": "^1.8.0",
@@ -48,6 +49,7 @@
     "express-rate-limit": "^7.5.1",
     "express-validator": "^7.2.1",
     "helmet": "^8.1.0",
+    "ioredis": "^6.0.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.11.0",
     "multer": "^2.0.2",

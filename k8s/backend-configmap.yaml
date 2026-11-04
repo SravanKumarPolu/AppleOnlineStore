@@ -10,3 +10,10 @@ data:
   NODE_ENV: "development"
   CORS_EXTRA_ORIGINS: "http://localhost:8080,http://localhost:8081,http://shop.novacart.localhost:8090,http://admin.novacart.localhost:8090"
   PAYPAL_ENV: "sandbox"
+  # Multi-replica Socket.IO fan-out (k8s/redis-deployment.yaml).
+  # Remove this key for a deliberate single-replica deployment.
+  REDIS_URL: "redis://novacart-redis.novacart.svc.cluster.local:6379"
+  # Local cluster is NODE_ENV=development, so an unreachable Redis logs and
+  # falls back to in-process delivery instead of blocking pod start. Set to
+  # "true" once the Redis manifest is applied and verified.
+  SOCKETIO_REDIS_REQUIRED: "false"

@@ -119,8 +119,24 @@ order before any write. Full state machine: [02-APP_FLOWS.md](./02-APP_FLOWS.md)
   `user_stop_typing`.
 - All emit helpers are null-safe: a down/uninitialized realtime layer can
   never 500 an order flow (this was a real bug fixed in Phase 1).
-- `/api/socket/status` exposes the connected-user count (public info
-  endpoint).
+- **Multi-replica fan-out (2026-11-04):** when a Redis target is configured
+  (`REDIS_URL` or `REDIS_HOST`), `services/socketService.js` attaches the
+  official `@socket.io/redis-adapter` over two `ioredis` connections
+  (pub + sub) after both report `ready`. Without Redis the historical
+  in-process adapter is used and `/health/ready` reports `realtime:memory`.
+  `realtime:redis` means both clients are ready; `degraded` means Redis was
+  attached but is currently unreachable — cross-instance delivery is then
+  **not** available and must not be claimed. In production a configured but
+  unreachable Redis is fatal at boot (`SOCKETIO_REDIS_REQUIRED`, default
+  true) rather than a silent fallback. `revokeToken`/`revokeUserSessions`
+  fan out through `serverSideEmit` so a logout on one pod closes sockets on
+  the others.
+- Transports remain `websocket` + `polling` by default for compatibility.
+  Multi-replica deployments behind a plain round-robin Service must either
+  set `SOCKETIO_TRANSPORTS=websocket` or provide session affinity for the
+  polling handshake.
+- `/api/socket/status` exposes the connected-user count and the adapter mode
+  (public info endpoint, never connection strings).
 
 ### 4.5 Analytics — inline tracking, live aggregation
 
@@ -211,8 +227,11 @@ without owner approval:**
    lifecycle; webhook retries ride PayPal's redelivery.
 3. **No cache** — product list hits MongoDB every request (global rate limit
    and pagination are the only protections).
-4. **Single process** — Socket.IO rooms and the drain/shutdown design assume
-   one instance; horizontal scaling is future DevOps scope.
+4. **Single-process assumptions removed for realtime only** — Socket.IO can
+   now fan out across replicas through the Redis adapter (§4.4). The drain /
+   shutdown design, the in-memory presence map and the `connectedUsers`
+   count remain per-process; horizontal scaling still requires the transports
+   decision above and a Redis target that is actually reachable.
 5. **Stock reservation is live, not merely informational** (K-5 fixed
    2026-10-25): checkout atomically decrements `stockQuantity` and rejects
    insufficient stock. Restoration on cancel/refund/expiry is exactly-once via

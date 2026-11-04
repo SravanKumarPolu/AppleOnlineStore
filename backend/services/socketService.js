@@ -30,15 +30,23 @@
 //      and internal bookkeeping the browser has no use for.
 import { randomUUID } from 'node:crypto';
 import { Server } from 'socket.io';
+import { createAdapter } from '@socket.io/redis-adapter';
+import Redis from 'ioredis';
 
 import orderModel from '../models/orderModel.js';
 import { buildAllowedOrigins } from '../config/allowedOrigins.js';
+import {
+  buildRedisClientOptions,
+  resolveRedisConfig,
+  resolveSocketTransports,
+} from '../config/redis.js';
 import {
   verifyAccessToken,
   resolveAccessIdentity,
   extractBearerToken,
   TOKEN_FAILURE,
 } from '../utils/accessToken.js';
+import { redactError } from '../utils/redact.js';
 
 const OBJECT_ID_RE = /^[0-9a-fA-F]{24}$/;
 
@@ -51,6 +59,12 @@ const MAX_REVALIDATIONS_PER_TICK = 200;
 const ROOM_JOIN_LIMIT = 60;
 const ROOM_JOIN_WINDOW_MS = 60_000;
 const MAX_TIMEOUT_MS = 2_147_483_647;
+
+/** serverSideEmit event names (only delivered when the Redis adapter is live). */
+const CLUSTER_EVENTS = Object.freeze({
+  REVOKE_TOKEN: 'novacart:revoke-token',
+  REVOKE_USER: 'novacart:revoke-user',
+});
 
 export const REALTIME_EVENT_TYPES = Object.freeze({
   ORDER_CREATED: 'order_created',
@@ -148,26 +162,61 @@ class SocketService {
     this.connections = new Map();
     this.revalidationTimer = null;
     this.revalidationCursor = 0;
+    /** Redis adapter clients (pub + sub). Null when the adapter is off. */
+    this.redisPub = null;
+    this.redisSub = null;
+    this.redisConfig = null;
+    this.redisWatchers = null;
+    this.redisErrorLogger = null;
+    this.realtimeMode = 'uninitialized';
+    /** Coalesces concurrent initialize() calls so Redis clients are created once. */
+    this.initPromise = null;
   }
 
   get isInitialized() {
     return this.io !== null;
   }
 
+  /**
+   * Initialize the Socket.IO server.
+   *
+   * Returns a promise. When Redis is not configured the promise resolves
+   * after the historical synchronous setup (existing callers that do not
+   * await still work). When Redis IS configured the promise resolves only
+   * after both Redis connections are ready and the adapter is attached —
+   * production traffic must not be accepted before that.
+   *
+   * Repeated / concurrent calls reuse the same initialization and never
+   * create a second pair of Redis clients.
+   */
   initialize(server) {
-    if (this.io) {
-      // A second initialize would orphan the first server's sockets.
-      return this.io;
+    if (this.io && !this.initPromise) {
+      return Promise.resolve(this.io);
     }
+    if (!this.initPromise) {
+      this.initPromise = this.#doInitialize(server).catch((error) => {
+        this.initPromise = null;
+        throw error;
+      });
+    }
+    return this.initPromise;
+  }
+
+  async #doInitialize(server) {
+    if (this.io) return this.io;
+
+    const redisConfig = resolveRedisConfig(process.env);
+    this.redisConfig = redisConfig;
 
     const allowedOrigins = buildAllowedOrigins(process.env);
+    const transports = resolveSocketTransports(process.env);
     this.io = new Server(server, {
       cors: {
         origin: allowedOrigins,
         methods: ['GET', 'POST'],
         credentials: true,
       },
-      transports: ['websocket', 'polling'],
+      transports,
       // CORS only constrains XHR/polling. A raw WebSocket upgrade bypasses the
       // browser's CORS check entirely, so the Origin header is validated for
       // both transports here against the same allow-list the HTTP layer uses.
@@ -196,6 +245,43 @@ class SocketService {
     });
 
     this.setupEventHandlers();
+    this.#registerClusterRevocationListeners();
+
+    if (redisConfig.enabled) {
+      if (redisConfig.invalid) {
+        // A misconfigured URL is a deployment error, not a reason to pretend
+        // the adapter is on. Required (prod) refuses to boot; otherwise we
+        // continue with in-process delivery and say so, loudly.
+        const problem = redisConfig.error || 'Redis adapter configuration is invalid';
+        if (redisConfig.required) {
+          await this.#teardownFailedInit();
+          throw new Error(`Refusing to start: ${problem}`);
+        }
+        this.realtimeMode = 'memory';
+        this.#log(`🚨 ${problem} — running with IN-PROCESS delivery (NOT distributed)`);
+      } else {
+        try {
+          await this.#attachRedisAdapter(redisConfig);
+        } catch (error) {
+          if (redisConfig.required) {
+            await this.#teardownFailedInit();
+            throw new Error(
+              'Refusing to start: Socket.IO Redis adapter is required but unavailable. ' +
+                redactError(error)
+            );
+          }
+          this.realtimeMode = 'memory';
+          this.#log(
+            '🚨 Socket.IO Redis adapter unavailable — running with IN-PROCESS delivery ' +
+              '(NOT distributed). Cross-pod events will be missed until Redis is reachable. ' +
+              redactError(error)
+          );
+        }
+      }
+    } else {
+      this.realtimeMode = 'memory';
+      this.#log('🔌 Socket.IO Redis adapter disabled — in-process delivery only (single replica)');
+    }
 
     const intervalMs =
       Number(process.env.SOCKET_REVALIDATE_INTERVAL_MS) || DEFAULT_REVALIDATE_INTERVAL_MS;
@@ -208,6 +294,279 @@ class SocketService {
 
     this.#log('🔌 WebSocket server initialized');
     return this.io;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Redis adapter (multi-replica fan-out)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * A required-adapter failure must not leave a usable io server behind:
+   * initialize() would otherwise resolve the half-built server on a retry
+   * (no adapter, still listening). Tear it down before the caller exits.
+   */
+  async #teardownFailedInit() {
+    const io = this.io;
+    this.io = null;
+    if (this.revalidationTimer) {
+      clearInterval(this.revalidationTimer);
+      this.revalidationTimer = null;
+    }
+    this.connections.clear();
+    await this.#quitRedisClients();
+    if (io) {
+      try {
+        io.close();
+      } catch {
+        // best-effort: the process is about to exit(1)
+      }
+    }
+    this.realtimeMode = 'uninitialized';
+  }
+
+  /**
+   * Attach the official Socket.IO Redis adapter.
+   *
+   * Exactly two Redis connections are created (pub + sub). A second call is a
+   * no-op — repeated initialize() must not multiply connections.
+   * The adapter is attached only after BOTH connections report ready, so a
+   * half-open Redis never silently carries production traffic.
+   */
+  async #attachRedisAdapter(config) {
+    if (this.redisPub || this.redisSub) {
+      // Already attached or attaching. Never create a second client pair.
+      return;
+    }
+
+    const options = buildRedisClientOptions(config);
+    if (!options) {
+      throw new Error('Redis adapter configuration is invalid');
+    }
+
+    this.#log(`🔌 Connecting Socket.IO Redis adapter → ${config.summary}`);
+
+    const pub = new Redis(options);
+    const sub = pub.duplicate();
+    this.redisPub = pub;
+    this.redisSub = sub;
+
+    // Attach a permanent error listener BEFORE connecting: ioredis emits
+    // 'error' on every failed reconnect attempt, and an unhandled 'error'
+    // event would crash the process during a Redis outage.
+    this.redisErrorLogger = (error) => {
+      this.#log('Socket.IO Redis adapter error:', redactError(error));
+    };
+    pub.on('error', this.redisErrorLogger);
+    sub.on('error', this.redisErrorLogger);
+
+    try {
+      await Promise.all([
+        this.#waitForRedisReady(pub, config.connectTimeoutMs, 'pub'),
+        this.#waitForRedisReady(sub, config.connectTimeoutMs, 'sub'),
+      ]);
+    } catch (error) {
+      await this.#quitRedisClients();
+      throw error;
+    }
+
+    this.io.adapter(createAdapter(pub, sub, { key: config.adapterKey }));
+    this.#watchRedis();
+    this.realtimeMode = 'redis';
+    this.#log(`🔌 Socket.IO Redis adapter ready → ${config.summary}`);
+  }
+
+  #waitForRedisReady(client, timeoutMs, label) {
+    if (client.status === 'ready') return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        client.off('ready', onReady);
+        client.off('error', onError);
+        fn(value);
+      };
+      const onReady = () => finish(resolve, undefined);
+      const onError = (err) => finish(reject, err);
+      const timer = setTimeout(() => {
+        finish(reject, new Error(`Redis ${label} connection timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      timer.unref?.();
+      client.once('ready', onReady);
+      client.once('error', onError);
+      Promise.resolve(client.connect()).catch((err) => finish(reject, err));
+    });
+  }
+
+  /** Track ready/end so health cannot claim distributed delivery while Redis is down. */
+  #watchRedis() {
+    const onReady = () => {
+      if (
+        this.redisPub?.status === 'ready' &&
+        this.redisSub?.status === 'ready' &&
+        this.realtimeMode !== 'redis'
+      ) {
+        this.realtimeMode = 'redis';
+        this.#log('🔌 Socket.IO Redis adapter reconnected — distributed delivery restored');
+      }
+    };
+    const onClose = () => {
+      if (this.realtimeMode === 'redis') {
+        this.realtimeMode = 'degraded';
+        this.#log(
+          '🚨 Socket.IO Redis adapter disconnected — cross-instance delivery is NOT available. ' +
+            'Local-socket delivery continues; health reports realtime=degraded.'
+        );
+      }
+    };
+    const onError = (error) => {
+      this.#log('Socket.IO Redis adapter error:', redactError(error));
+    };
+
+    this.redisWatchers = { onReady, onClose, onError };
+    this.redisPub.on('ready', onReady);
+    this.redisSub.on('ready', onReady);
+    // 'close' (not 'end'): retryStrategy keeps retrying forever, so ioredis
+    // never emits 'end'. Binding 'end' would report degraded only in health
+    // (status-derived) while the logs stayed silent through the entire outage.
+    this.redisPub.on('close', onClose);
+    this.redisSub.on('close', onClose);
+  }
+
+  #unwatchRedis() {
+    if (!this.redisWatchers) return;
+    this.redisPub?.off('ready', this.redisWatchers.onReady);
+    this.redisSub?.off('ready', this.redisWatchers.onReady);
+    this.redisPub?.off('close', this.redisWatchers.onClose);
+    this.redisSub?.off('close', this.redisWatchers.onClose);
+    this.redisWatchers = null;
+  }
+
+  async #quitRedisClients() {
+    this.#unwatchRedis();
+    const clients = [this.redisPub, this.redisSub].filter(Boolean);
+    const errorLogger = this.redisErrorLogger;
+    this.redisErrorLogger = null;
+    this.redisPub = null;
+    this.redisSub = null;
+    if (clients.length === 0) return;
+
+    for (const client of clients) {
+      if (errorLogger) client.off('error', errorLogger);
+    }
+
+    await Promise.allSettled(
+      clients.map(async (client) => {
+        try {
+          await Promise.race([
+            client.quit(),
+            new Promise((resolve) => {
+              const timer = setTimeout(resolve, 1500);
+              timer.unref?.();
+            }),
+          ]);
+        } catch {
+          // quit() fails when the socket is already gone.
+        }
+        // Always force-close: `quit()` resolves before the socket tears down,
+        // and a degraded client keeps scheduling retryStrategy timers that
+        // would hold the event loop open (and outlive a test run).
+        try {
+          client.disconnect();
+        } catch {
+          // already closed
+        }
+      })
+    );
+  }
+
+  /**
+   * Honest realtime mode for health, status and tests.
+   *
+   *   uninitialized — initialize() has not completed
+   *   memory        — no Redis configured, or a non-required adapter failed
+   *                   and we fell back (never claimed as distributed)
+   *   redis         — both clients ready; cross-instance delivery is live
+   *   degraded      — Redis was configured but is not currently ready
+   */
+  getRealtimeMode() {
+    if (!this.io) return 'uninitialized';
+    if (!this.redisPub && !this.redisSub) return 'memory';
+    const ready =
+      this.redisPub?.status === 'ready' && this.redisSub?.status === 'ready';
+    return ready ? 'redis' : 'degraded';
+  }
+
+  /** Structured status (never includes credentials or connection strings). */
+  getRealtimeStatus() {
+    const config = this.redisConfig;
+    return {
+      mode: this.getRealtimeMode(),
+      redis: {
+        enabled: Boolean(config?.enabled) && !config?.invalid,
+        required: Boolean(config?.required),
+        target: config?.enabled && !config?.invalid ? config.summary : null,
+      },
+      transports: this.io?.opts?.transports ?? resolveSocketTransports(process.env),
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cross-instance session revocation (Redis adapter only)
+  // ---------------------------------------------------------------------------
+
+  #registerClusterRevocationListeners() {
+    if (!this.io) return;
+    this.io.on(CLUSTER_EVENTS.REVOKE_TOKEN, (payload) => {
+      if (!payload || typeof payload !== 'object') return;
+      const { tokenId, reason } = payload;
+      if (typeof tokenId !== 'string' || tokenId === '') return;
+      this.#revokeLocalByTokenId(
+        tokenId,
+        typeof reason === 'string' && reason ? reason : TOKEN_FAILURE.REVOKED
+      );
+    });
+    this.io.on(CLUSTER_EVENTS.REVOKE_USER, (payload) => {
+      if (!payload || typeof payload !== 'object') return;
+      const id = objectIdOf(payload.userId);
+      if (!id) return;
+      const reason = typeof payload.reason === 'string' && payload.reason ? payload.reason : TOKEN_FAILURE.REVOKED;
+      this.#revokeLocalByUserId(id, reason);
+    });
+  }
+
+  /** serverSideEmit to the other instances; never delivered to self. */
+  #emitCluster(event, payload) {
+    if (this.getRealtimeMode() !== 'redis') return;
+    try {
+      this.io.serverSideEmit(event, payload);
+    } catch (error) {
+      this.#log('Cluster revocation emit failed:', redactError(error));
+    }
+  }
+
+  #revokeLocalByTokenId(tokenId, reason) {
+    if (!this.io || typeof tokenId !== 'string' || tokenId === '') return 0;
+    let revoked = 0;
+    for (const socket of this.io.sockets.sockets.values()) {
+      if (socket.data?.tokenId !== tokenId) continue;
+      this.#revoke(socket, reason);
+      revoked += 1;
+    }
+    return revoked;
+  }
+
+  #revokeLocalByUserId(userId, reason) {
+    const id = objectIdOf(userId);
+    if (!this.io || !id) return 0;
+    let revoked = 0;
+    for (const socket of this.io.sockets.sockets.values()) {
+      if (socket.data?.identity?.kind !== 'user' || socket.data.identity.id !== id) continue;
+      this.#revoke(socket, reason);
+      revoked += 1;
+    }
+    return revoked;
   }
 
   // ---------------------------------------------------------------------------
@@ -576,28 +935,20 @@ class SocketService {
     this.#broadcast(this.#roomSetForOrder(orderData, payload), REALTIME_EVENTS.ORDER_UPDATED, payload);
   }
 
-  /** Revoke every live socket using one JWT session, including other tabs. */
+  /** Revoke every live socket using one JWT session, including other tabs and other pods. */
   revokeToken(tokenId, reason = TOKEN_FAILURE.REVOKED) {
     if (!this.io || typeof tokenId !== 'string' || tokenId === '') return 0;
-    let revoked = 0;
-    for (const socket of this.io.sockets.sockets.values()) {
-      if (socket.data?.tokenId !== tokenId) continue;
-      this.#revoke(socket, reason);
-      revoked += 1;
-    }
+    const revoked = this.#revokeLocalByTokenId(tokenId, reason);
+    this.#emitCluster(CLUSTER_EVENTS.REVOKE_TOKEN, { tokenId, reason });
     return revoked;
   }
 
-  /** Revoke all active shopper sockets after an account-wide tokenVersion bump. */
+  /** Revoke all active shopper sockets after an account-wide tokenVersion bump (all pods). */
   revokeUserSessions(userId, reason = TOKEN_FAILURE.REVOKED) {
     const id = objectIdOf(userId);
     if (!this.io || !id) return 0;
-    let revoked = 0;
-    for (const socket of this.io.sockets.sockets.values()) {
-      if (socket.data?.identity?.kind !== 'user' || socket.data.identity.id !== id) continue;
-      this.#revoke(socket, reason);
-      revoked += 1;
-    }
+    const revoked = this.#revokeLocalByUserId(id, reason);
+    this.#emitCluster(CLUSTER_EVENTS.REVOKE_USER, { userId: id, reason });
     return revoked;
   }
 
@@ -644,17 +995,21 @@ class SocketService {
 
   // Close the WebSocket server cleanly (graceful shutdown support).
   // Safe to call when not initialized or more than once.
+  // Redis pub/sub clients are quit AFTER the io server stops so the adapter
+  // never publishes on a half-closed connection.
   async close() {
     if (this.revalidationTimer) {
       clearInterval(this.revalidationTimer);
       this.revalidationTimer = null;
     }
+    this.initPromise = null;
 
     const io = this.io;
     this.io = null;
 
     if (!io) {
       this.connections.clear();
+      await this.#quitRedisClients();
       return;
     }
 
@@ -677,6 +1032,8 @@ class SocketService {
 
     this.connections.clear();
     this.revalidationCursor = 0;
+    await this.#quitRedisClients();
+    this.realtimeMode = 'uninitialized';
     this.#log('🔌 WebSocket server closed');
   }
 
@@ -689,3 +1046,6 @@ class SocketService {
 // Export singleton instance
 const socketService = new SocketService();
 export default socketService;
+// Export the class so tests can build isolated instances (two-process /
+// two-server integration specs) without touching the singleton.
+export { SocketService };

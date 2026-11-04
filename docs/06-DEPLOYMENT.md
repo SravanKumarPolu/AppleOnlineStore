@@ -126,6 +126,12 @@ npm run build
 | `ENABLE_DEBUG_ENDPOINTS` | expose debug endpoints in production | default `false` (404) |
 | `RATE_LIMIT_MAX` | per-IP requests / 15 min (default 1000) | optional; raise only on a disposable load target |
 | `AUTH_RATE_LIMIT_MAX` | auth-endpoint requests / 15 min / IP under `/api/user/*` (default 20) | optional; never raise on a real deployment to make a suite pass |
+| `REDIS_URL` / `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` / `REDIS_DB` / `REDIS_TLS` | Socket.IO multi-replica adapter target | optional; unset = in-process delivery (one replica only) |
+| `SOCKETIO_REDIS_REQUIRED` | refuse to boot when a configured Redis is unreachable | default `true` in production, `false` elsewhere |
+| `SOCKETIO_REDIS_CONNECT_TIMEOUT_MS` | Redis connect budget at boot (default 10000) | |
+| `SOCKETIO_REDIS_KEY` | adapter pub/sub prefix (default `socket.io`) | must be identical on every replica |
+| `SOCKETIO_TRANSPORTS` | `websocket,polling` (default) or `websocket` | polling with >1 replica needs session affinity |
+| `SOCKET_REVALIDATE_INTERVAL_MS` | live-socket revalidation cadence (default 60000) | |
 
 `frontend/.env`: `VITE_BACKEND_URL`, `VITE_PAYPAL_CLIENT_ID` — the only two
 the code reads (the second was missing from the old template; empty value
@@ -134,8 +140,8 @@ the wrong PayPal app — K-2).
 `admin/.env`: `VITE_BACKEND_URL` (fallback `http://localhost:3001`).
 
 `backend/.env.example` was rewritten 2026-10-25 (K-8 fix) to document exactly
-these 35 runtime variables (30 active + 5 optional commented out) plus a
-clearly-marked dev/test section — the old
+these 46 runtime variables (the previous 35 plus ten Redis/realtime knobs and
+`SOCKET_REVALIDATE_INTERVAL_MS`, which the code already read) — the old
 template's aspirational Stripe/Razorpay/OAuth/Redis/Twilio block is gone.
 
 (Historical note: `ENABLE_ANALYTICS` / `PERFORMANCE_SAMPLE_RATE` were read
@@ -203,3 +209,65 @@ Agreed direction, explicitly **not implemented** in this repository:
    with `status:'completed'`.
 6. `POST /api/orders/paypal/webhook` with an invalid body → 400 (fail-closed
    proof).
+7. `GET /health/ready` → `checks.realtime` is `redis` when a multi-replica
+   adapter is configured; `degraded` means Redis is configured but currently
+   unreachable (cross-pod delivery is NOT available).
+
+## 8. Local vs production Redis
+
+`k8s/redis-deployment.yaml` + `k8s/redis-service.yaml` are **local kind
+fixtures**, deliberately minimal: one replica, no AUTH, no TLS, ephemeral
+`emptyDir`, ClusterIP only. They exist so two or more backend pods can share
+a pub/sub bus during local testing. Never expose them through a NodePort,
+LoadBalancer, Ingress or HTTPRoute.
+
+Production is a different contract:
+
+| Concern | Local kind fixture | Production requirement |
+|---|---|---|
+| Exposure | ClusterIP only, no auth | Private network / VPC; `AUTH` **and** TLS (`rediss://`), never a public endpoint |
+| Availability | single pod, `emptyDir` | managed/HA with automatic failover; the adapter tolerates short drops but cross-pod delivery pauses |
+| Durability | none | persistence/backups (adapter state is ephemeral, but revocation/pub-sub isolation is security-relevant) |
+| Capacity | 128 MB, `noeviction` | sized for peak broadcast volume; eviction of pub/sub channels is not a cache decision |
+| Access control | namespace isolation | Redis ACLs per app user; anyone who can `PUBLISH` can inject adapter traffic or `serverSideEmit` revocation events |
+| Observability | `redis-cli ping` probes | latency/connection alarms; alert when `/health/ready` reports `realtime:degraded` |
+| Secrets | none | `REDIS_PASSWORD` / `REDIS_URL` from a Kubernetes Secret, never a ConfigMap |
+
+Wire it into the backend with a Secret-backed env var (do **not** commit real
+values):
+
+```bash
+kubectl -n novacart create secret generic novacart-redis \
+  --from-literal=REDIS_URL='rediss://default:<password>@<host>:6380/0'
+kubectl -n novacart set env deployment/novacart-backend \
+  --from=secret/novacart-redis
+kubectl -n novacart rollout status deployment/novacart-backend
+```
+
+For local kind, apply the two Redis manifests and point the ConfigMap at the
+ClusterIP service (already present as `REDIS_URL` in
+`k8s/backend-configmap.yaml`):
+
+```bash
+docker build -t novacart-backend:v3 ./backend
+kind load docker-image novacart-backend:v3 --name <kind-cluster>
+kubectl apply -f k8s/redis-deployment.yaml -f k8s/redis-service.yaml
+kubectl -n novacart rollout status deployment/novacart-redis
+kubectl apply -f k8s/backend-configmap.yaml
+kubectl -n novacart rollout restart deployment/novacart-backend
+kubectl -n novacart rollout status deployment/novacart-backend
+kubectl -n novacart logs deployment/novacart-backend | grep 'Realtime mode'
+```
+
+Scaling check (only after the Redis rollout is healthy):
+
+```bash
+kubectl -n novacart scale deployment/novacart-backend --replicas=3
+kubectl -n novacart get pods -l app=novacart-backend -o wide
+```
+
+Cross-pod delivery is **UNVERIFIED** until a test with two real backend pods
+and a real Redis observes an event emitted on pod A arriving at a client
+connected to pod B. The in-repo integration spec
+(`__tests__/socketRedisAdapter.spec.js`) proves the adapter wiring across two
+instances in one process; it does not prove Kubernetes networking.

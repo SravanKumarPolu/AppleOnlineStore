@@ -41,8 +41,14 @@ On 2026-10-27 the full gate was re-executed after the customer-auth
 hardening (password-recovery modal a11y + failure feedback, login email
 normalization, admin-login hardening): backend 43 suites / 449 tests,
 storefront 25 files / 142 tests, admin 13 files / 71 tests, E2E 18 tests ×
-3 engines (54/54) — evidence in docs/testing/2026-10-27-*.md; the newer
-counts win for gate expectations.
+3 engines (54/54) — evidence in docs/testing/2026-10-27-*.md.
+
+On 2026-11-04 the backend gate was re-executed after the multi-replica
+Socket.IO work: **47 suites / 534 tests, all passed, exit 0** (417.9 s baseline,
+re-run after the reconnect-closure fix).
+That run includes the new `redisConfig.spec.js` (19) and
+`socketRedisAdapter.spec.js` (19). The newer counts win for gate
+expectations.
 Read both before planning DevOps Phase 01; where they differ, `docs/10` wins
 because it was executed after the fixes.
 
@@ -63,7 +69,7 @@ NovaCart/
 ## 3. Command truth table (verified — copy these, not package.json)
 
 ```bash
-# Backend regression suite — THE canonical gate (43 suites / 441 tests)
+# Backend regression suite — THE canonical gate (47 suites / 534 tests, 2026-11-04)
 cd backend && npm run test:security
 # equivalent: node --experimental-vm-modules node_modules/.bin/jest --runInBand
 
@@ -104,7 +110,7 @@ cd admin    && npm run dev            # admin panel (port 5174)
 
 ## 4. Environment variables (the only real ones)
 
-**Backend (35):** `NODE_ENV, PORT, MONGODB_URI, MONGODB_DB (optional),
+**Backend (46):** `NODE_ENV, PORT, MONGODB_URI, MONGODB_DB (optional),
 JWT_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD, PAYPAL_ENV, PAYPAL_CLIENT_ID,
 PAYPAL_CLIENT_SECRET, PAYPAL_WEBHOOK_ID, PAYPAL_PAYEE_EMAIL (optional),
 PAYPAL_RESERVATION_TTL_MS, RESERVATION_SWEEP_INTERVAL_MS,
@@ -113,16 +119,23 @@ FRONTEND_URL, ADMIN_URL, CORS_EXTRA_ORIGINS (optional), SMTP_HOST, SMTP_PORT,
 SMTP_USER, SMTP_PASS, SMTP_SECURE, SMTP_ALLOW_SELF_SIGNED, EMAIL_FROM,
 EMAIL_FROM_NAME, APP_NAME, CLOUDINARY_NAME, CLOUDINARY_API_KEY,
 CLOUDINARY_SECRET_KEY, ENABLE_DEBUG_ENDPOINTS (optional),
-RATE_LIMIT_MAX (optional), AUTH_RATE_LIMIT_MAX (optional)`.
+RATE_LIMIT_MAX (optional), AUTH_RATE_LIMIT_MAX (optional),
+SOCKET_REVALIDATE_INTERVAL_MS (optional),
+REDIS_URL / REDIS_HOST / REDIS_PORT / REDIS_PASSWORD / REDIS_DB / REDIS_TLS
+(all optional), SOCKETIO_REDIS_REQUIRED (optional),
+SOCKETIO_REDIS_CONNECT_TIMEOUT_MS (optional), SOCKETIO_REDIS_KEY (optional),
+SOCKETIO_TRANSPORTS (optional)`.
 **Frontend (2):** `VITE_BACKEND_URL`, `VITE_PAYPAL_CLIENT_ID`.
 **Admin (1):** `VITE_BACKEND_URL`.
 
 `backend/.env.example` documents **exactly** these (verified against `process.env`
-usage, 2026-10-26): grouped, with code-verified defaults. `MONGODB_DB`,
+usage, 2026-11-04): grouped, with code-verified defaults. `MONGODB_DB`,
 `PAYPAL_PAYEE_EMAIL`, `CORS_EXTRA_ORIGINS`, `ENABLE_DEBUG_ENDPOINTS`,
-`RATE_LIMIT_MAX` and `AUTH_RATE_LIMIT_MAX` are optional and default to
+`RATE_LIMIT_MAX`, `AUTH_RATE_LIMIT_MAX`, every `REDIS_*`/`SOCKETIO_*` knob and
+`SOCKET_REVALIDATE_INTERVAL_MS` are optional and default to
 `e-commerce` / unset (payee = the credential owner) / empty / `false` / `1000` /
-`20`. The old template's ~60 aspirational
+`20` / adapter off / `socket.io` / `websocket,polling` / `60000`. The old
+template's ~60 aspirational
 vars (Stripe, Razorpay, OAuth, Redis, Twilio, FCM…) are gone. The dead
 `services/analyticsService.js` (which read `ENABLE_ANALYTICS` /
 `PERFORMANCE_SAMPLE_RATE` and required nonexistent model files) was removed
@@ -317,6 +330,18 @@ When a history file contradicts `docs/`, **`docs/` wins.**
     is what actually invalidates sessions) or accept that exposure. Verified
     2026-10-26: a token signed with the pre-rotation secret is rejected with
     401, and the same check is automated by `npm run verify:old-credentials`.
+26. **Socket.IO is only multi-replica when Redis is actually ready.** The
+    default in-process adapter is correct for ONE backend replica and silently
+    loses events across pods. With `REDIS_URL`/`REDIS_HOST` set, the service
+    attaches `@socket.io/redis-adapter` over two ioredis clients **after both
+    report ready**; in production an unreachable Redis is fatal at boot
+    (`SOCKETIO_REDIS_REQUIRED` defaults true). Never fall back to in-memory
+    delivery in production and call it scaled. `/health/ready` must report
+    `realtime:redis`; `degraded` means cross-instance delivery is down. Also
+    choose: `SOCKETIO_TRANSPORTS=websocket` or session affinity for polling —
+    plain round-robin polling handshakes on one pod and long-polls another.
+    Cross-POD delivery is UNVERIFIED until a two-pod test passes; the in-repo
+    spec only proves two instances in one process.
 
 ## 8. Rules of engagement for changes
 

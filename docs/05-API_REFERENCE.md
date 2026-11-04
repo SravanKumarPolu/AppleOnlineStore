@@ -189,6 +189,15 @@ the browser is offline, the storefront restarts the connection on the browser's
 connection/reconnection, so clients must treat realtime state events as
 notifications, not a durable event log. Manual Reconnect remains available.
 
+**Multi-replica delivery:** with a Redis target configured, events fan out
+across backend instances through `@socket.io/redis-adapter`; `session_revoked`
+from a logout/tokenVersion bump also reaches sockets held by other instances.
+`/health/ready` reports `checks.realtime` = `memory` (single replica, no Redis),
+`redis` (adapter attached and both clients ready) or `degraded` (configured but
+currently unreachable — do not assume cross-instance delivery). The union-room
+broadcast is unchanged, so a socket in `user_<id>` + `order_<id>` still receives
+exactly one event.
+
 | Direction | Event | Payload / notes |
 |---|---|---|
 | server → client | `order_updated` | Minimal `{_id,eventId,type,orderStatus,paymentStatus,refundStatus,updatedAt}` state; `type` is `order_created`, `order_updated` or `payment_update`; union-room broadcast prevents duplicates |

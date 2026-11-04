@@ -9,6 +9,9 @@
 // an email address in the next log line) cannot prevent redaction here.
 const MONGO_URI_CREDENTIALS_RE = /(mongodb(?:\+srv)?:\/\/)([^:@/\s]+):(.+)@(?=[^@\n]*(\n|$))/g;
 
+// redis://user:password@... and rediss://user:password@...
+const REDIS_URI_CREDENTIALS_RE = /(rediss?:\/\/)([^:@/\s]+):(.+)@(?=[^@\n]*(\n|$))/g;
+
 // Bearer/Basic authorization headers embedded in logged strings.
 const BEARER_CREDENTIALS_RE = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{16,}/g;
 
@@ -18,8 +21,24 @@ const JWT_SHAPED_RE = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{
 function redactSecretShapedSubstrings(text) {
   return text
     .replace(MONGO_URI_CREDENTIALS_RE, '$1***:***@')
+    .replace(REDIS_URI_CREDENTIALS_RE, '$1***:***@')
     .replace(BEARER_CREDENTIALS_RE, '$1 [REDACTED]')
     .replace(JWT_SHAPED_RE, '[REDACTED_JWT]');
+}
+
+/**
+ * Extract a host-only summary (no credentials) from a Redis URL,
+ * for startup logs that want to show where they are connecting.
+ */
+export function summarizeRedisUri(uri) {
+  if (typeof uri !== 'string') return '';
+  const redacted = redactSecretShapedSubstrings(uri);
+  try {
+    const parsed = new URL(redacted);
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+  } catch {
+    return redacted;
+  }
 }
 
 /**
