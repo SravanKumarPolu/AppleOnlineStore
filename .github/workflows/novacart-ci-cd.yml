@@ -1,0 +1,121 @@
+
+name: NovaCart CI/CD
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: novacart-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # STEP 1: Lint, test and build all applications
+  verify:
+    name: Verify ${{ matrix.app }}
+    runs-on: ubuntu-24.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [backend, frontend, admin]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: ${{ matrix.app }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ${{ matrix.app }}
+        run: npm ci --ignore-scripts
+
+      - name: Run ESLint
+        working-directory: ${{ matrix.app }}
+        run: npm run lint
+
+      - name: Run unit tests
+        working-directory: ${{ matrix.app }}
+        run: |
+          if [ "${{ matrix.app }}" = "backend" ]; then
+            npm test -- --ci
+          else
+            npm test -- --run
+          fi
+
+      - name: Build application
+        working-directory: ${{ matrix.app }}
+        run: npm run build
+
+  # STEP 2: Build and security-scan Docker images
+  image:
+    name: Build and scan ${{ matrix.app }}
+    needs: verify
+    runs-on: ubuntu-24.04
+
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [backend, frontend, admin]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set Docker image name
+        shell: bash
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          echo "IMAGE=ghcr.io/${REPO_OWNER,,}/novacart-${{ matrix.app }}:${GITHUB_SHA}" >> "$GITHUB_ENV"
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ./${{ matrix.app }}
+          file: ./${{ matrix.app }}/Dockerfile
+          load: true
+          push: false
+          tags: ${{ env.IMAGE }}
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}
+          format: table
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+          vuln-type: os,library
+          scanners: vuln
+          ignore-unfixed: true
+
+      # STEP 3: Publish verified images on main
+      - name: Login to GitHub Container Registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push verified image to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: docker push "$IMAGE"

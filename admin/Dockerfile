@@ -22,6 +22,14 @@ RUN npm run build
 # Stage 2: Serve using Nginx
 FROM nginxinc/nginx-unprivileged:stable-alpine
 
+# Temporarily use root to install security updates
+USER root
+
+RUN apk upgrade --no-cache
+
+# Return to the image's unprivileged user
+USER 101
+
 COPY --chmod=644 nginx.conf /etc/nginx/conf.d/default.conf
 
 COPY --from=build /app/dist /usr/share/nginx/html
