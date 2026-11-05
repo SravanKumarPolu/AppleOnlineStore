@@ -39,7 +39,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: ${{ matrix.app }}
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Run ESLint
         working-directory: ${{ matrix.app }}
