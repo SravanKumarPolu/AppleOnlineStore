@@ -1,0 +1,29 @@
+cat > terraform/.gitignore <<'EOF'
+# Terraform provider downloads
+.terraform/
+
+# Local Terraform state
+*.tfstate
+*.tfstate.*
+
+# Sensitive variable files
+*.tfvars
+*.tfvars.json
+
+# Crash logs
+crash.log
+crash.*.log
+
+# Local override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Terraform CLI configuration
+.terraformrc
+terraform.rc
+
+# Local plan files
+*.tfplan
+EOF
