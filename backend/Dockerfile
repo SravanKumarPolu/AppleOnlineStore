@@ -1,4 +1,3 @@
-
 # Stage 1: Install production dependencies
 FROM node:24-alpine AS dependencies
 
@@ -16,8 +15,10 @@ ENV PORT=3001
 
 WORKDIR /app
 
-# Remove npm CLI and its bundled vulnerable dependencies
-# from the runtime image. Node.js remains available.
+# Upgrade zlib before switching to the non-root user
+RUN apk upgrade --no-cache zlib
+
+# Remove npm CLI from the production runtime
 RUN rm -rf /usr/local/lib/node_modules/npm \
     && rm -f /usr/local/bin/npm /usr/local/bin/npx
 
@@ -27,7 +28,7 @@ COPY --from=dependencies --chown=node:node /app/node_modules ./node_modules
 # Copy application files
 COPY --chown=node:node . .
 
-# Ensure application files are readable by node
+# Ensure application files are readable
 RUN chmod -R a+rX /app
 
 # Run as non-root user
