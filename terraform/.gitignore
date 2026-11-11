@@ -1,4 +1,3 @@
-cat > terraform/.gitignore <<'EOF'
 # Terraform provider downloads
 .terraform/
 
@@ -26,6 +25,6 @@ terraform.rc
 
 # Local plan files
 *.tfplan
-EOF
+
 # Terraform state backups
 terraform-state-*.backup
