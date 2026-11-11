@@ -27,3 +27,5 @@ terraform.rc
 # Local plan files
 *.tfplan
 EOF
+# Terraform state backups
+terraform-state-*.backup
