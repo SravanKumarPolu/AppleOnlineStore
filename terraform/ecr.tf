@@ -46,3 +46,43 @@ resource "aws_ecr_lifecycle_policy" "backend" {
     ]
   })
 }
+
+# NovaCart frontend container repository
+
+resource "aws_ecr_repository" "frontend" {
+  name                 = "novacart/frontend"
+  image_tag_mutability = "IMMUTABLE"
+  force_delete         = false
+
+  encryption_configuration {
+    encryption_type = "AES256"
+  }
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+
+  tags = {
+    Name = "novacart-dev-frontend-ecr"
+  }
+}
+
+# NovaCart admin container repository
+
+resource "aws_ecr_repository" "admin" {
+  name                 = "novacart/admin"
+  image_tag_mutability = "IMMUTABLE"
+  force_delete         = false
+
+  encryption_configuration {
+    encryption_type = "AES256"
+  }
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+
+  tags = {
+    Name = "novacart-dev-admin-ecr"
+  }
+}
