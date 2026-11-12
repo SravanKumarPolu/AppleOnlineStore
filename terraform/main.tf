@@ -12,29 +12,33 @@ resource "aws_vpc" "novacart" {
 
 # Public Subnet A
 resource "aws_subnet" "public_a" {
-  vpc_id            = aws_vpc.novacart.id
-  cidr_block        = "10.20.1.0/24"
-  availability_zone = "us-east-1a"
-
-  map_public_ip_on_launch = false
+  vpc_id                  = aws_vpc.novacart.id
+  cidr_block              = "10.20.1.0/24"
+  availability_zone       = "us-east-1a"
+  map_public_ip_on_launch = true
 
   tags = {
-    Name = "novacart-public-a"
+    Name                     = "novacart-public-a"
+    "kubernetes.io/role/elb" = "1"
   }
 }
 
-# Public Subnet B
+
+
+# Public Subnet B — EKS managed nodes and public load balancers
+
 resource "aws_subnet" "public_b" {
-  vpc_id            = aws_vpc.novacart.id
-  cidr_block        = "10.20.2.0/24"
-  availability_zone = "us-east-1b"
-
-  map_public_ip_on_launch = false
+  vpc_id                  = aws_vpc.novacart.id
+  cidr_block              = "10.20.2.0/24"
+  availability_zone       = "us-east-1b"
+  map_public_ip_on_launch = true
 
   tags = {
-    Name = "novacart-public-b"
+    Name                     = "novacart-public-b"
+    "kubernetes.io/role/elb" = "1"
   }
 }
+
 
 # Private Subnet A
 resource "aws_subnet" "private_a" {
