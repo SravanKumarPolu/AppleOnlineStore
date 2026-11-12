@@ -13,7 +13,9 @@ resource "aws_eks_addon" "vpc_cni" {
   }
 
   depends_on = [
-    aws_iam_role_policy_attachment.eks_cni_policy
+    aws_iam_role_policy_attachment.eks_cni_policy,
+    aws_eks_node_group.novacart,
+    aws_eks_addon.pod_identity_agent
   ]
 }
 
