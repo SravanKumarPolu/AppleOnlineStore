@@ -13,12 +13,14 @@ spec:
       labels:
         app: novacart-backend
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: backend
           image: 942875993314.dkr.ecr.us-east-1.amazonaws.com/novacart/backend:0ecd934341f6-amd64
           imagePullPolicy: IfNotPresent
           resources:
             requests:
+              ephemeral-storage: "128Mi"
               cpu: "100m"
               memory: "128Mi"
             limits:

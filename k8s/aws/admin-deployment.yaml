@@ -13,6 +13,7 @@ spec:
       labels:
         app: novacart-admin
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: admin
           image: 942875993314.dkr.ecr.us-east-1.amazonaws.com/novacart/admin:dashboard-auth-6f964de
@@ -22,6 +23,7 @@ spec:
               containerPort: 8080
           resources:
             requests:
+              ephemeral-storage: "64Mi"
               cpu: "50m"
               memory: "64Mi"
             limits:
