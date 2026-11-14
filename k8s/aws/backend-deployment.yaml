@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: novacart-backend
+  namespace: novacart
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: novacart-backend
+  template:
+    metadata:
+      labels:
+        app: novacart-backend
+    spec:
+      containers:
+        - name: backend
+          image: 942875993314.dkr.ecr.us-east-1.amazonaws.com/novacart/backend:0ecd934341f6-amd64
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          ports:
+            - containerPort: 3001
+          envFrom:
+            - secretRef:
+                name: novacart-backend-env
+            - configMapRef:
+                name: novacart-backend-config
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: 3001
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 24
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 3001
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 3001
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3

@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: novacart-backend-config
+  namespace: novacart
+
+data:
+  PORT: "3001"
+  NODE_ENV: "production"
+  PAYPAL_ENV: "sandbox"
+  SOCKETIO_REDIS_REQUIRED: "false"
+  MONGODB_DB: "novacart_dev"
+
+  FRONTEND_URL: "https://novakart.xyz"
+  ADMIN_URL: "http://127.0.0.1:8081"
+  CORS_EXTRA_ORIGINS: "https://www.novakart.xyz"
