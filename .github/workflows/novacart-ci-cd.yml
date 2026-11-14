@@ -67,6 +67,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
 
     strategy:
       fail-fast: false
@@ -119,3 +120,28 @@ jobs:
       - name: Push verified image to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: docker push "$IMAGE"
+
+      # STEP 4: Publish scanned backend image to Amazon ECR
+      - name: Configure AWS credentials
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.app == 'backend'
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::942875993314:role/novacart-github-deploy
+          aws-region: us-east-1
+          allowed-account-ids: '942875993314'
+
+      - name: Login to Amazon ECR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.app == 'backend'
+        run: |
+          aws ecr get-login-password --region us-east-1 |
+            docker login --username AWS --password-stdin 942875993314.dkr.ecr.us-east-1.amazonaws.com
+
+      - name: Push scanned backend image to ECR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.app == 'backend'
+        env:
+          ECR_REPOSITORY: 942875993314.dkr.ecr.us-east-1.amazonaws.com/novacart/backend
+        run: |
+          ECR_IMAGE="${ECR_REPOSITORY}:${GITHUB_SHA}"
+          docker tag "$IMAGE" "$ECR_IMAGE"
+          docker push "$ECR_IMAGE"
+          echo "Published $ECR_IMAGE"
