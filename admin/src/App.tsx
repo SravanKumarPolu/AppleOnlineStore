@@ -98,8 +98,8 @@ const App = () => {
             <main className="flex-1 overflow-y-auto bg-gradient-to-br from-neutral-50 via-white to-neutral-100">
               <div className="max-w-7xl mx-auto px-8 py-10">
                 <Routes>
-                  <Route path="/" element={<Dashboard />} />
-                  <Route path="/dashboard" element={<Dashboard />} />
+                 <Route path="/" element={<Dashboard token={token} />} />
+<Route path="/dashboard" element={<Dashboard token={token} />} />
                   <Route path="/add" element={<Add token={token} />} />
                   <Route path="/list" element={<List token={token} />} />
                   <Route path="/orders" element={<Orders token={token} />} />
