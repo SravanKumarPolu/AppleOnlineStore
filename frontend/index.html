@@ -1,75 +1,197 @@
+
 <!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" href="/favicon.ico" sizes="any" />
-    <link rel="icon" type="image/svg+xml" href="/favicon-32x32.svg" />
-    <!-- Viewport & Theme -->
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Viewport and Theme -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#3b82f6" />
-    <!-- Reset links carry ?token=… in the URL — keep query strings out of
-         cross-origin Referer headers (the default in modern browsers, now
-         pinned explicitly). -->
-    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <meta name="color-scheme" content="light" />
 
-    <!-- App Capabilities -->
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="NovaCart" />
-    <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="msapplication-TileColor" content="#3b82f6" />
-    <meta name="msapplication-tap-highlight" content="no" />
+    <!-- Privacy: restrict referrer details sent to other origins -->
+    <meta
+      name="referrer"
+      content="strict-origin-when-cross-origin"
+    />
 
-    <!-- Manifest -->
-    <link rel="manifest" href="/manifest.json" />
+    <!-- Primary SEO -->
+    <title>NovaCart — Consumer Electronics Store</title>
 
-    <!-- Icons -->
-    <!-- apple-touch-icon must be a real PNG (iOS ignores SVG here); 192px is
-         the smallest existing square icon and iOS scales it. -->
-    <link rel="apple-touch-icon" href="/pwa-192x192.png" />
-    <link rel="icon" type="image/png" sizes="192x192" href="/pwa-192x192.png" />
-    <link rel="icon" type="image/png" sizes="512x512" href="/pwa-512x512.png" />
-    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
-    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
-    <link rel="mask-icon" href="/masked-icon.svg" color="#3b82f6" />
+    <meta
+      name="description"
+      content="Explore iPhone, iPad, Mac, Apple Watch, AirPods and accessories at NovaCart. Discover electronics, manage your cart and track orders in our shopping demo."
+    />
 
-    <!-- Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&family=Open+Sans:wght@300;400;600&family=Poppins:wght@400;600;700&family=Roboto:wght@300;400;500&family=Playfair+Display:wght@400;600;700&family=Lora:wght@400;500;600&family=Oswald:wght@400;500;600&family=Inter:wght@300;400;500&family=Raleway:wght@400;600;700&family=Noto+Sans:wght@300;400;600&family=Work+Sans:wght@400;500;600&family=Barlow:wght@400;500;600&family=Nunito:wght@400;500;600&family=Fjalla+One&display=swap" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+    <meta
+      name="keywords"
+      content="NovaCart, electronics store, iPhone, iPad, Mac, Apple Watch, AirPods, accessories, online shopping, PWA"
+    />
 
-    <!-- SEO Meta Tags -->
-    <meta name="description" content="Shop iPhone, iPad, Mac, Apple Watch, AirPods and accessories at NovaCart. Installable PWA with realtime order tracking and secure PayPal checkout." />
-    <meta name="keywords" content="NovaCart, electronics store, iPhone, iPad, Mac, Apple Watch, AirPods, accessories, online shopping, PWA" />
     <meta name="author" content="NovaCart" />
 
-    <!--
-      OWNER ACTION (docs/10 §16.9 item 10): the tags below need ABSOLUTE URLs
-      and are intentionally omitted until the production domain is final —
-      the previous values pointed at the retired skr-e-commerce.netlify.app
-      host and a stale asset. Once the domain is known, add:
-        <link rel="canonical" href="https://<domain>/" />
-        <meta property="og:url" content="https://<domain>/" />
-        <meta property="og:image" content="https://<domain>/pwa-512x512.png" />
-        <meta name="twitter:image" content="https://<domain>/pwa-512x512.png" />
-        <meta name="twitter:card" content="summary_large_image" />
-      plus public/sitemap.xml with absolute URLs and a Sitemap line in
-      robots.txt.
-    -->
-    <!-- Open Graph Meta Tags -->
+    <link
+      rel="canonical"
+      href="https://novakart.xyz/"
+    />
+
+    <!-- Open Graph: Facebook, LinkedIn and other platforms -->
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="NovaCart — Consumer Electronics Store" />
-    <meta property="og:description" content="Shop iPhone, iPad, Mac, Apple Watch, AirPods and accessories at NovaCart. Installable PWA with realtime order tracking and secure PayPal checkout." />
     <meta property="og:site_name" content="NovaCart" />
 
-    <!-- Twitter Meta Tags -->
-    <meta name="twitter:card" content="summary" />
-    <meta name="twitter:title" content="NovaCart — Consumer Electronics Store" />
-    <meta name="twitter:description" content="Shop iPhone, iPad, Mac, Apple Watch, AirPods and accessories at NovaCart. Installable PWA with realtime order tracking and secure PayPal checkout." />
+    <meta
+      property="og:title"
+      content="NovaCart — Consumer Electronics Store"
+    />
 
-    <title>NovaCart — Consumer Electronics Store</title>
+    <meta
+      property="og:description"
+      content="Explore electronics and accessories at NovaCart. Experience a modern shopping demo with a PWA storefront and real-time order tracking."
+    />
+
+    <meta
+      property="og:url"
+      content="https://novakart.xyz/"
+    />
+
+    <meta
+      property="og:image"
+      content="https://novakart.xyz/pwa-512x512.png"
+    />
+
+    <meta
+      property="og:image:alt"
+      content="NovaCart store logo"
+    />
+
+    <meta property="og:image:width" content="512" />
+    <meta property="og:image:height" content="512" />
+
+    <!-- Twitter / X -->
+    <meta name="twitter:card" content="summary" />
+
+    <meta
+      name="twitter:title"
+      content="NovaCart — Consumer Electronics Store"
+    />
+
+    <meta
+      name="twitter:description"
+      content="Explore electronics and accessories at NovaCart, a modern shopping demo with real-time order tracking."
+    />
+
+    <meta
+      name="twitter:image"
+      content="https://novakart.xyz/pwa-512x512.png"
+    />
+
+    <meta
+      name="twitter:image:alt"
+      content="NovaCart store logo"
+    />
+
+    <!-- Favicons -->
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="/favicon-32x32.svg"
+    />
+
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="16x16"
+      href="/favicon-16x16.png"
+    />
+
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="32x32"
+      href="/favicon-32x32.png"
+    />
+
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="192x192"
+      href="/pwa-192x192.png"
+    />
+
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="512x512"
+      href="/pwa-512x512.png"
+    />
+
+    <!-- Apple Touch Icon -->
+    <link
+      rel="apple-touch-icon"
+      href="/pwa-192x192.png"
+    />
+
+    <link
+      rel="mask-icon"
+      href="/masked-icon.svg"
+      color="#3b82f6"
+    />
+
+    <!-- Progressive Web App -->
+    <link rel="manifest" href="/manifest.json" />
+
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+
+    <meta
+      name="apple-mobile-web-app-title"
+      content="NovaCart"
+    />
+
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="default"
+    />
+
+    <meta
+      name="msapplication-TileColor"
+      content="#3b82f6"
+    />
+
+    <meta
+      name="msapplication-tap-highlight"
+      content="no"
+    />
+
+    <!-- Google Fonts: preserve existing font families -->
+    <link
+      rel="preconnect"
+      href="https://fonts.googleapis.com"
+    />
+
+    <link
+      rel="preconnect"
+      href="https://fonts.gstatic.com"
+      crossorigin
+    />
+
+    <link
+      href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&amp;family=Open+Sans:wght@300;400;600&amp;family=Poppins:wght@400;600;700&amp;family=Roboto:wght@300;400;500&amp;family=Playfair+Display:wght@400;600;700&amp;family=Lora:wght@400;500;600&amp;family=Oswald:wght@400;500;600&amp;family=Inter:wght@300;400;500&amp;family=Raleway:wght@300;400;600;700&amp;family=Noto+Sans:wght@300;400;600&amp;family=Work+Sans:wght@400;500;600&amp;family=Barlow:wght@400;500;600&amp;family=Nunito:wght@400;500;600&amp;family=Fjalla+One&amp;display=swap"
+      rel="stylesheet"
+    />
+
+    <link
+      href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&amp;display=swap"
+      rel="stylesheet"
+    />
   </head>
+
   <body>
     <div id="root"></div>
+
+    <!-- React / Vite Entry Point -->
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

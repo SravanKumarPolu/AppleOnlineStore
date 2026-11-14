@@ -1,0 +1,84 @@
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: novacart-public
+  namespace: novacart
+  annotations:
+    alb.ingress.kubernetes.io/load-balancer-name: novacart-dev-alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/ip-address-type: ipv4
+
+    # Existing public subnets in two availability zones
+    alb.ingress.kubernetes.io/subnets: subnet-0d6acd94e5822fc09,subnet-02d855eeb4c68f905
+
+    # Let the controller create and manage the ALB security group
+    alb.ingress.kubernetes.io/inbound-cidrs: 0.0.0.0/0
+
+    # HTTPS and HTTP-to-HTTPS redirect
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:942875993314:certificate/36664528-2493-4fa8-9dc2-7dcc1b930d63
+
+    # Default health check (frontend)
+    alb.ingress.kubernetes.io/healthcheck-path: /
+    alb.ingress.kubernetes.io/healthcheck-port: traffic-port
+    alb.ingress.kubernetes.io/success-codes: '200'
+
+spec:
+  ingressClassName: alb
+  rules:
+    - host: novakart.xyz
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 3001
+
+          - path: /socket.io
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 3001
+
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 8080
+
+    - host: www.novakart.xyz
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 3001
+
+          - path: /socket.io
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 3001
+
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 8080

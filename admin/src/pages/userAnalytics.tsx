@@ -91,7 +91,7 @@ const UserAnalytics: React.FC = () => {
   }, [fetchUserData]);
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString();
+    return new Date(dateString).toLocaleDateString('en-US');
   };
 
   const formatNumber = (num: number) => {

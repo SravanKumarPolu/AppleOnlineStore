@@ -84,7 +84,7 @@ const SearchAnalytics: React.FC = () => {
   }, [fetchSearchData]);
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString();
+    return new Date(dateString).toLocaleDateString('en-US');
   };
 
   const formatNumber = (num: number) => {

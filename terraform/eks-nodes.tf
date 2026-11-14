@@ -10,7 +10,7 @@ resource "aws_eks_node_group" "novacart" {
     aws_subnet.public_b.id
   ]
 
-  instance_types = ["t3.large"]
+  instance_types = ["m7i-flex.large"]
   ami_type       = "AL2023_x86_64_STANDARD"
   capacity_type  = "ON_DEMAND"
   disk_size      = 30
@@ -31,7 +31,6 @@ resource "aws_eks_node_group" "novacart" {
 
   depends_on = [
     aws_iam_role_policy_attachment.eks_worker_node_policy,
-    aws_iam_role_policy_attachment.eks_ecr_pull_policy,
-    aws_iam_role_policy_attachment.eks_cni_bootstrap
+    aws_iam_role_policy_attachment.eks_ecr_pull_policy
   ]
 }

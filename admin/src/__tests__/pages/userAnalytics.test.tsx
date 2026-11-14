@@ -95,6 +95,7 @@ describe('UserAnalytics (admin panel)', () => {
 
     // Daily activity trend.
     expect(screen.getByText('Daily Activity Trend')).toBeInTheDocument();
+
     expect(screen.getByText('10/19/2026')).toBeInTheDocument();
     expect(screen.getByText('12')).toBeInTheDocument();
 
