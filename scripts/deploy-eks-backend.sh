@@ -76,6 +76,73 @@ if [[ "$MODE" == "--dry-run" ]]; then
   exit 0
 fi
 
+rollback_on_failure() {
+  echo "ERROR: Deployment verification failed."
+  echo "Checking whether automatic rollback is safe..."
+
+  local snapshot current_image version patch
+
+  if ! snapshot="$(kubectl --context "$CLUSTER" -n "$NAMESPACE" \
+    get deployment "$DEPLOYMENT" \
+    -o jsonpath='{.metadata.resourceVersion}{" "}{.spec.template.spec.containers[0].image}')"; then
+    echo "Cannot inspect deployment. Manual recovery required."
+    return 1
+  fi
+
+  version="${snapshot%% *}"
+  current_image="${snapshot#* }"
+
+  if [[ "$current_image" != "$IMAGE" ]]; then
+    echo "Deployment image changed since this run."
+    echo "Current image: $current_image"
+    echo "Automatic rollback skipped to protect newer changes."
+    return 1
+  fi
+
+  printf -v patch \
+    '[{"op":"test","path":"/metadata/resourceVersion","value":"%s"},{"op":"test","path":"/spec/template/spec/containers/0/image","value":"%s"},{"op":"replace","path":"/spec/template/spec/containers/0/image","value":"%s"}]' \
+    "$version" "$IMAGE" "$CURRENT"
+
+  echo "Restoring previous image: $CURRENT"
+
+  if ! kubectl --context "$CLUSTER" -n "$NAMESPACE" \
+    patch deployment "$DEPLOYMENT" \
+    --type=json -p "$patch"; then
+    echo "Rollback patch rejected or failed."
+    echo "Inspect deployment before attempting manual recovery."
+    return 1
+  fi
+
+  if ! kubectl --context "$CLUSTER" -n "$NAMESPACE" \
+    rollout status "deployment/$DEPLOYMENT" --timeout=180s; then
+    echo "Rollback rollout did not complete successfully."
+    return 1
+  fi
+
+  local restored_image
+
+  if ! restored_image="$(kubectl --context "$CLUSTER"     -n "$NAMESPACE" get deployment "$DEPLOYMENT"     -o jsonpath='{.spec.template.spec.containers[0].image}')"; then
+    echo "ERROR: Could not verify rollback image."
+    return 1
+  fi
+
+  if [[ "$restored_image" != "$CURRENT" ]]; then
+    echo "ERROR: Rollback image does not match previous image."
+    echo "Expected: $CURRENT"
+    echo "Actual:   $restored_image"
+    return 1
+  fi
+
+  echo "Rollback completed and previous image verified."
+  return 0
+}
+
+deployment_failed() {
+  rollback_on_failure || true
+  echo "Deployment failed; inspect cluster state."
+  exit 1
+}
+
 echo "Recording previous image..."
 printf '%s\n' "$CURRENT" > "$BACKUP"
 
@@ -88,9 +155,7 @@ echo "Waiting for rollout..."
 if ! kubectl --context "$CLUSTER" -n "$NAMESPACE" \
   rollout status "deployment/${DEPLOYMENT}" \
   --timeout=180s; then
-  echo "ERROR: Rollout failed."
-  echo "Previous image saved in $BACKUP"
-  exit 1
+  deployment_failed
 fi
 
 echo "Verifying deployed image..."
@@ -100,11 +165,11 @@ ACTUAL="$(kubectl --context "$CLUSTER" \
 
 [[ "$ACTUAL" == "$IMAGE" ]] || {
   echo "ERROR: Deployed image does not match target."
-  exit 1
+  deployment_failed
 }
 
 echo "Testing public APIs..."
-python3 - <<'SMOKE_TEST'
+if python3 - <<'SMOKE_TEST'
 import json
 import urllib.request
 
@@ -126,5 +191,9 @@ for path, field in [
 
         print(f"PASS: {path} ({len(data[field])} records)")
 SMOKE_TEST
-
-echo "Deployment and basic API smoke tests passed."
+then
+  echo "Deployment and basic API smoke tests passed."
+else
+  echo "API smoke tests failed."
+  deployment_failed
+fi
