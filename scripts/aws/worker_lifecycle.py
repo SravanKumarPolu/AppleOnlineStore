@@ -151,6 +151,13 @@ def terminate_verified(instance_id, deployment, runner):
     """Terminate only the worker confirmed by the lookup helper."""
     verified = lookup(deployment, runner)
 
+    if verified == "NONE":
+        # Deployment discovery may lag. Verify the exact candidate
+        # independently before any destructive operation.
+        verified = verify_instance_by_id(
+            instance_id, deployment, runner
+        )
+
     if verified != instance_id:
         raise LifecycleError(
             f"Termination blocked: worker verification failed. "
@@ -238,12 +245,21 @@ def launch_and_schedule(deployment, config, runner=run_command):
     # Never trust the RunInstances response alone.
     try:
         verified_id = reconcile_worker(deployment, runner)
-    except (LifecycleError, subprocess.TimeoutExpired) as exc:
-        raise LifecycleError(
-            f"CRITICAL: Worker {instance_id} could not be verified "
-            "before scheduling. Launch outcome requires reconciliation; "
-            "the worker may still be running without an expiry schedule."
-        ) from exc
+    except (LifecycleError, subprocess.TimeoutExpired) as lookup_error:
+        # Deployment-tag discovery may lag after RunInstances.
+        # Only use direct verification for a known candidate instance ID.
+        try:
+            verified_id = verify_instance_by_id(
+                instance_id, deployment, runner
+            )
+        except (LifecycleError, subprocess.TimeoutExpired) as direct_error:
+            raise LifecycleError(
+                f"CRITICAL: Worker {instance_id} for {deployment} "
+                "could not be verified by deployment lookup or direct "
+                "instance inspection. Cleanup is NOT confirmed. "
+                f"Lookup error: {lookup_error}; "
+                f"Direct verification error: {direct_error}"
+            ) from direct_error
 
     if verified_id != instance_id:
         raise LifecycleError(
