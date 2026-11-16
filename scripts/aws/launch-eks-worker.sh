@@ -43,6 +43,7 @@ config = {
     "ImageId": ami,
     "UserData": base64.b64encode(Path(user_data).read_bytes()).decode("ascii"),
     "InstanceType": "t3.small",
+    "CreditSpecification": {"CpuCredits": "standard"},
     "MinCount": 1,
     "MaxCount": 1,
     "ClientToken": "novacart-local-check-only",
@@ -80,6 +81,7 @@ config = {
 }
 
 assert config["MaxCount"] == 1
+assert config["CreditSpecification"]["CpuCredits"] == "standard"
 assert base64.b64decode(config["UserData"]) == Path(user_data).read_bytes()
 assert len(Path(user_data).read_bytes()) <= 16384
 assert config["MetadataOptions"]["HttpTokens"] == "required"
