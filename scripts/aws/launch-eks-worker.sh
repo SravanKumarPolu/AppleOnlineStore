@@ -16,8 +16,8 @@ if [[ "$MODE" == "--launch" ]]; then
     exit 1
   fi
 
-  if [[ -z "${NOVACART_DEPLOYMENT_ID:-}" ]]; then
-    echo "BLOCKED: NOVACART_DEPLOYMENT_ID is required." >&2
+  if [[ ! "${NOVACART_DEPLOYMENT_ID:-}" =~ ^github-[0-9]+-[0-9]+$ ]]; then
+    echo "BLOCKED: Valid GitHub deployment ID is required." >&2
     exit 1
   fi
 
