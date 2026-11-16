@@ -3,6 +3,7 @@
 import json
 import re
 import subprocess
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -41,6 +42,24 @@ def lookup(deployment, runner=run_command):
         raise LifecycleError("Invalid worker lookup response")
 
     return worker
+
+
+def reconcile_worker(deployment, runner, attempts=3, delay=2):
+    """Retry read-only discovery after an uncertain launch response."""
+    for attempt in range(attempts):
+        worker = lookup(deployment, runner)
+
+        if worker != "NONE":
+            return worker
+
+        if attempt < attempts - 1:
+            time.sleep(delay)
+
+    raise LifecycleError(
+        "EC2 launch outcome remains uncertain after "
+        f"{attempts} lookups for {deployment}. "
+        "Manual AWS reconciliation is required."
+    )
 
 
 def terminate_verified(instance_id, deployment, runner):
@@ -94,24 +113,25 @@ def launch_and_schedule(deployment, config, runner=run_command):
     instance_id = lookup(deployment, runner)
 
     if instance_id == "NONE":
-        result = runner([
-            "aws", "ec2", "run-instances",
-            "--region", REGION,
-            "--cli-input-json", json.dumps(config),
-            "--output", "json",
-        ])
+        try:
+            result = runner([
+                "aws", "ec2", "run-instances",
+                "--region", REGION,
+                "--cli-input-json", json.dumps(config),
+                "--output", "json",
+            ])
+        except subprocess.TimeoutExpired:
+            result = subprocess.CompletedProcess(
+                args=[], returncode=1,
+                stdout="", stderr="EC2 request timed out",
+            )
 
         if result.returncode:
             # The API may have created an instance even if its response
             # was lost. Do not launch again with a different token.
-            recovered = lookup(deployment, runner)
-            if recovered == "NONE":
-                raise LifecycleError(
-                    "EC2 launch outcome uncertain. "
-                    f"Client token: {expected_token}. "
-                    "Reconcile AWS state before retrying."
-                )
-            instance_id = recovered
+            instance_id = reconcile_worker(
+                deployment, runner
+            )
         else:
             try:
                 instances = json.loads(result.stdout)["Instances"]
@@ -120,15 +140,24 @@ def launch_and_schedule(deployment, config, runner=run_command):
                 instance_id = instances[0]["InstanceId"]
                 if not re.fullmatch(r"i-[a-f0-9]{17}", instance_id):
                     raise ValueError("Invalid instance ID")
-            except (KeyError, ValueError, TypeError) as exc:
-                raise LifecycleError(
-                    "EC2 response cannot be verified; "
-                    f"client token: {expected_token}"
-                ) from exc
+            except (KeyError, ValueError, TypeError, IndexError) as exc:
+                try:
+                    instance_id = reconcile_worker(deployment, runner)
+                except LifecycleError as recovery_error:
+                    raise LifecycleError(
+                        "EC2 response unreadable and recovery unresolved; "
+                        f"client token: {expected_token}"
+                    ) from recovery_error
 
-    schedule = runner([
-        "bash", str(SCHEDULER), "--create", instance_id
-    ])
+    try:
+        schedule = runner([
+            "bash", str(SCHEDULER), "--create", instance_id
+        ])
+    except subprocess.TimeoutExpired:
+        schedule = subprocess.CompletedProcess(
+            args=[], returncode=1,
+            stdout="", stderr="Scheduler request timed out",
+        )
 
     if schedule.returncode:
         try:
