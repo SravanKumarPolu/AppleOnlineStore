@@ -185,7 +185,8 @@ class WorkerLifecycleTests(unittest.TestCase):
             )
 
         self.assertEqual(result, INSTANCE)
-        reconcile.assert_called_once()
+        # Recovery lookup followed by pre-scheduling verification.
+        self.assertEqual(reconcile.call_count, 2)
         self.assertEqual(
             sum("run-instances" in c for c in calls), 1
         )
@@ -201,7 +202,8 @@ class WorkerLifecycleTests(unittest.TestCase):
             )
 
         self.assertEqual(result, INSTANCE)
-        reconcile.assert_called_once()
+        # Recovery lookup followed by pre-scheduling verification.
+        self.assertEqual(reconcile.call_count, 2)
         self.assertEqual(
             sum("run-instances" in c for c in calls), 1
         )
@@ -221,3 +223,36 @@ class WorkerLifecycleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WorkerLaunchVerificationTests(unittest.TestCase):
+
+    def test_unverified_new_worker_must_not_be_scheduled(self):
+        calls = []
+
+        def runner(args):
+            calls.append(args)
+
+            if "find-existing-worker.sh" in str(args):
+                return response("NONE")
+
+            if "run-instances" in args:
+                return response(json.dumps({
+                    "Instances": [{"InstanceId": INSTANCE}]
+                }))
+
+            if "create-worker-cleanup-schedule.sh" in str(args):
+                return response("Schedule verified")
+
+            raise AssertionError(f"Unexpected command: {args}")
+
+        with patch.object(lifecycle.time, "sleep", return_value=None):
+            with self.assertRaises(lifecycle.LifecycleError):
+                lifecycle.launch_and_schedule(
+                    DEPLOYMENT, CONFIG, runner
+                )
+
+        self.assertFalse(
+            any("create-worker-cleanup-schedule.sh" in str(c)
+                for c in calls)
+        )

@@ -149,6 +149,24 @@ def launch_and_schedule(deployment, config, runner=run_command):
                         f"client token: {expected_token}"
                     ) from recovery_error
 
+    # Verify the worker against AWS before scheduling it.
+    # Never trust the RunInstances response alone.
+    try:
+        verified_id = reconcile_worker(deployment, runner)
+    except (LifecycleError, subprocess.TimeoutExpired) as exc:
+        raise LifecycleError(
+            f"CRITICAL: Worker {instance_id} could not be verified "
+            "before scheduling. Launch outcome requires reconciliation; "
+            "the worker may still be running without an expiry schedule."
+        ) from exc
+
+    if verified_id != instance_id:
+        raise LifecycleError(
+            f"CRITICAL: Worker identity mismatch. "
+            f"Returned {instance_id}, verified {verified_id}. "
+            "Manual AWS reconciliation required."
+        )
+
     try:
         schedule = runner([
             "bash", str(SCHEDULER), "--create", instance_id
