@@ -1,0 +1,73 @@
+name: NovaCart EC2 Worker Authorization Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ec2-dryrun:
+    name: Verify GitHub EC2 launch permissions
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::942875993314:role/novacart-github-eks-deploy
+          aws-region: us-east-1
+          allowed-account-ids: '942875993314'
+
+      - name: Verify AWS identity
+        shell: bash
+        run: |
+          aws sts get-caller-identity
+          test "$(aws sts get-caller-identity --query Account --output text)" = "942875993314"
+
+      - name: Generate EC2 launch request
+        shell: bash
+        run: |
+          bash scripts/aws/launch-eks-worker.sh --check |
+            python3 -c '
+          import json, sys
+          output = sys.stdin.read()
+          marker = "Proposed launch configuration:\n"
+          assert marker in output
+          config = json.loads(output.split(marker, 1)[1])
+          assert config["MinCount"] == config["MaxCount"] == 1
+          assert config["MetadataOptions"]["HttpTokens"] == "required"
+          assert config["BlockDeviceMappings"][0]["Ebs"]["Encrypted"]
+          assert config["InstanceInitiatedShutdownBehavior"] == "terminate"
+          with open("/tmp/novacart-worker-dryrun.json", "w") as f:
+              json.dump(config, f)
+          '
+          chmod 600 /tmp/novacart-worker-dryrun.json
+
+      - name: Test EC2 authorization without launching
+        shell: bash
+        run: |
+          set +e
+          OUTPUT="$(aws ec2 run-instances \
+            --cli-input-json file:///tmp/novacart-worker-dryrun.json \
+            --dry-run \
+            --region us-east-1 2>&1)"
+          STATUS=$?
+          set -e
+
+          if [ "$STATUS" -ne 0 ] && [[ "$OUTPUT" == *"DryRunOperation"* ]]; then
+            echo "PASS: GitHub role authorized for EC2 launch."
+            echo "PASS: No EC2 instance launched."
+          else
+            echo "FAIL: EC2 DryRun did not return DryRunOperation."
+            echo "$OUTPUT"
+            exit 1
+          fi
