@@ -75,13 +75,16 @@ config = {
             "DeleteOnTermination": True
         }
     }],
-    "TagSpecifications": [{
-        "ResourceType": "instance",
-        "Tags": [
-            {"Key": "NovaCartPurpose", "Value": "eks-deployment-worker"},
-            {"Key": "ManagedBy", "Value": "github-automation"}
-        ]
-    }]
+    "TagSpecifications": [
+        {
+            "ResourceType": resource_type,
+            "Tags": [
+                {"Key": "NovaCartPurpose", "Value": "eks-deployment-worker"},
+                {"Key": "ManagedBy", "Value": "github-automation"}
+            ]
+        }
+        for resource_type in ("instance", "volume")
+    ]
 }
 
 assert config["MaxCount"] == 1
