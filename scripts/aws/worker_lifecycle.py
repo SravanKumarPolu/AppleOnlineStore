@@ -44,6 +44,91 @@ def lookup(deployment, runner=run_command):
     return worker
 
 
+def verify_instance_by_id(instance_id, deployment, runner=run_command):
+    """Verify a specific EC2 worker before any recovery action."""
+    if not re.fullmatch(r"i-[a-f0-9]{17}", instance_id):
+        raise LifecycleError("Invalid EC2 instance ID")
+
+    if not re.fullmatch(r"github-[0-9]+-[0-9]+", deployment):
+        raise LifecycleError("Invalid deployment ID")
+
+    try:
+        result = runner([
+            "aws", "ec2", "describe-instances",
+            "--region", REGION,
+            "--instance-ids", instance_id,
+            "--query", "Reservations[].Instances[]",
+            "--output", "json",
+        ])
+    except subprocess.TimeoutExpired as exc:
+        raise LifecycleError("EC2 verification timed out") from exc
+
+    if result.returncode:
+        raise LifecycleError("EC2 verification request failed")
+
+    try:
+        instances = json.loads(result.stdout)
+        if not isinstance(instances, list) or len(instances) != 1:
+            raise ValueError("Expected exactly one instance")
+
+        instance = instances[0]
+        tags = {
+            tag["Key"]: tag["Value"]
+            for tag in instance.get("Tags", [])
+        }
+        profile = instance.get("IamInstanceProfile", {}).get("Arn")
+        groups = {
+            group["GroupId"]
+            for group in instance.get("SecurityGroups", [])
+        }
+        metadata = instance.get("MetadataOptions", {})
+
+        expected = {
+            "InstanceId": instance_id,
+            "ImageId": "ami-096ef200a877f36af",
+            "InstanceType": "t3.small",
+            "SubnetId": "subnet-0d6acd94e5822fc09",
+        }
+
+        for key, value in expected.items():
+            if instance.get(key) != value:
+                raise ValueError(f"Unexpected {key}")
+
+        if instance["State"]["Name"] not in ("pending", "running"):
+            raise ValueError("Worker is not active")
+
+        if tags.get("NovaCartPurpose") != "eks-deployment-worker":
+            raise ValueError("Wrong worker purpose")
+
+        if tags.get("ManagedBy") != "github-automation":
+            raise ValueError("Wrong worker manager")
+
+        if tags.get("NovaCartDeploymentId") != deployment:
+            raise ValueError("Wrong deployment owner")
+
+        if profile != (
+            "arn:aws:iam::942875993314:instance-profile/"
+            "NovaCart-EKS-DeploymentWorkerProfile"
+        ):
+            raise ValueError("Wrong IAM instance profile")
+
+        if groups != {"sg-0d442aff54a847834"}:
+            raise ValueError("Wrong security group")
+
+        if metadata.get("HttpTokens") != "required":
+            raise ValueError("IMDSv2 is not required")
+
+        if metadata.get("HttpEndpoint") != "enabled":
+            raise ValueError("Metadata endpoint is disabled")
+
+    except (KeyError, TypeError, ValueError) as exc:
+        raise LifecycleError(
+            f"Worker {instance_id} failed ownership verification: {exc}"
+        ) from exc
+
+    return instance_id
+
+
 def reconcile_worker(deployment, runner, attempts=3, delay=2):
     """Retry read-only discovery after an uncertain launch response."""
     for attempt in range(attempts):

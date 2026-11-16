@@ -256,3 +256,87 @@ class WorkerLaunchVerificationTests(unittest.TestCase):
             any("create-worker-cleanup-schedule.sh" in str(c)
                 for c in calls)
         )
+
+
+class DirectInstanceVerificationTests(unittest.TestCase):
+
+    def setUp(self):
+        self.instance = {
+            "InstanceId": INSTANCE,
+            "State": {"Name": "running"},
+            "ImageId": "ami-096ef200a877f36af",
+            "InstanceType": "t3.small",
+            "SubnetId": "subnet-0d6acd94e5822fc09",
+            "SecurityGroups": [
+                {"GroupId": "sg-0d442aff54a847834"}
+            ],
+            "MetadataOptions": {
+                "HttpTokens": "required",
+                "HttpEndpoint": "enabled",
+            },
+            "IamInstanceProfile": {
+                "Arn": (
+                    "arn:aws:iam::942875993314:instance-profile/"
+                    "NovaCart-EKS-DeploymentWorkerProfile"
+                )
+            },
+            "Tags": [
+                {"Key": "NovaCartPurpose",
+                 "Value": "eks-deployment-worker"},
+                {"Key": "ManagedBy",
+                 "Value": "github-automation"},
+                {"Key": "NovaCartDeploymentId",
+                 "Value": DEPLOYMENT},
+            ],
+        }
+
+    def verify(self, instance):
+        def runner(args):
+            self.assertEqual(
+                args[:3], ["aws", "ec2", "describe-instances"]
+            )
+            self.assertIn(INSTANCE, args)
+            return response(json.dumps([instance]))
+
+        return lifecycle.verify_instance_by_id(
+            INSTANCE, DEPLOYMENT, runner
+        )
+
+    def test_approved_instance(self):
+        self.assertEqual(
+            self.verify(self.instance), INSTANCE
+        )
+
+    def test_wrong_deployment_rejected(self):
+        self.instance["Tags"][-1]["Value"] = "github-999-1"
+        with self.assertRaises(lifecycle.LifecycleError):
+            self.verify(self.instance)
+
+    def test_wrong_ami_rejected(self):
+        self.instance["ImageId"] = "ami-00000000000000000"
+        with self.assertRaises(lifecycle.LifecycleError):
+            self.verify(self.instance)
+
+    def test_wrong_instance_type_rejected(self):
+        self.instance["InstanceType"] = "m7i-flex.large"
+        with self.assertRaises(lifecycle.LifecycleError):
+            self.verify(self.instance)
+
+    def test_wrong_security_group_rejected(self):
+        self.instance["SecurityGroups"] = [
+            {"GroupId": "sg-00000000000000000"}
+        ]
+        with self.assertRaises(lifecycle.LifecycleError):
+            self.verify(self.instance)
+
+    def test_insecure_imds_rejected(self):
+        self.instance["MetadataOptions"]["HttpTokens"] = "optional"
+        with self.assertRaises(lifecycle.LifecycleError):
+            self.verify(self.instance)
+
+    def test_wrong_iam_profile_rejected(self):
+        self.instance["IamInstanceProfile"]["Arn"] = (
+            "arn:aws:iam::942875993314:instance-profile/Other"
+        )
+        with self.assertRaises(lifecycle.LifecycleError):
+            self.verify(self.instance)
