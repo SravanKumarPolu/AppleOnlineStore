@@ -155,6 +155,10 @@ def main():
         "--launch", action="store_true",
         help="Request a guarded EC2 launch",
     )
+    modes.add_argument(
+        "--lookup", action="store_true",
+        help="Find an existing deployment worker without modifying AWS",
+    )
     args = parser.parse_args()
 
     if args.check:
@@ -162,6 +166,16 @@ def main():
         return
 
     deployment, config = preflight()
+
+    if args.lookup:
+        worker = find_worker(deployment)
+        if worker == "NONE":
+            print("PASS: No existing worker for deployment")
+        else:
+            print(f"PASS: Verified existing worker: {worker}")
+        print("PASS: Read-only worker lookup completed")
+        return
+
     verify_github_identity(deployment)
 
     # This gate remains closed until lifecycle failure tests pass.
