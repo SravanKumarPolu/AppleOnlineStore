@@ -1,0 +1,34 @@
+name: NovaCart EKS Deployment Authentication
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  verify-deployment-identity:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Configure AWS deployment credentials
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::942875993314:role/novacart-github-eks-deploy
+          aws-region: us-east-1
+          allowed-account-ids: '942875993314'
+
+      - name: Verify deployment identity
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+          ARN="$(aws sts get-caller-identity --query Arn --output text)"
+
+          test "$ACCOUNT" = "942875993314"
+          [[ "$ARN" == arn:aws:sts::942875993314:assumed-role/novacart-github-eks-deploy/* ]]
+
+          echo "PASS: GitHub EKS deployment identity verified"
