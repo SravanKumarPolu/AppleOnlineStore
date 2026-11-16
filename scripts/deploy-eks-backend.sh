@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-export AWS_PROFILE="${AWS_PROFILE:-novacart-dev}"
+# Use AWS_PROFILE when explicitly supplied; otherwise use the default AWS credential chain.
 export AWS_REGION="us-east-1"
 
 ACCOUNT="942875993314"
-CLUSTER="novacart-aws-dev"
+CLUSTER="novacart-dev-eks"
 NAMESPACE="novacart"
 DEPLOYMENT="novacart-backend"
 CONTAINER="backend"
