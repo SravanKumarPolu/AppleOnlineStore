@@ -39,3 +39,6 @@ blob-report/
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+__pycache__/
+*.pyc
