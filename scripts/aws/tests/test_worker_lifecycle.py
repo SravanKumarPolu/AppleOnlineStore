@@ -185,7 +185,8 @@ class WorkerLifecycleTests(unittest.TestCase):
             )
 
         self.assertEqual(result, INSTANCE)
-        reconcile.assert_called_once()
+        # Recovery lookup followed by pre-scheduling verification.
+        self.assertEqual(reconcile.call_count, 2)
         self.assertEqual(
             sum("run-instances" in c for c in calls), 1
         )
@@ -201,7 +202,8 @@ class WorkerLifecycleTests(unittest.TestCase):
             )
 
         self.assertEqual(result, INSTANCE)
-        reconcile.assert_called_once()
+        # Recovery lookup followed by pre-scheduling verification.
+        self.assertEqual(reconcile.call_count, 2)
         self.assertEqual(
             sum("run-instances" in c for c in calls), 1
         )
@@ -221,3 +223,287 @@ class WorkerLifecycleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WorkerLaunchVerificationTests(unittest.TestCase):
+
+    def test_unverified_new_worker_must_not_be_scheduled(self):
+        calls = []
+
+        def runner(args):
+            calls.append(args)
+
+            if "find-existing-worker.sh" in str(args):
+                return response("NONE")
+
+            if "run-instances" in args:
+                return response(json.dumps({
+                    "Instances": [{"InstanceId": INSTANCE}]
+                }))
+
+            if args[:3] == ["aws", "ec2", "describe-instances"]:
+                # AWS cannot confirm this candidate's ownership.
+                return response("[]")
+
+            if "create-worker-cleanup-schedule.sh" in str(args):
+                raise AssertionError(
+                    "Unverified worker must never be scheduled"
+                )
+
+            raise AssertionError(f"Unexpected command: {args}")
+
+        with patch.object(lifecycle.time, "sleep", return_value=None):
+            with self.assertRaises(lifecycle.LifecycleError):
+                lifecycle.launch_and_schedule(
+                    DEPLOYMENT, CONFIG, runner
+                )
+
+        self.assertFalse(
+            any("create-worker-cleanup-schedule.sh" in str(c)
+                for c in calls)
+        )
+
+
+class DirectInstanceVerificationTests(unittest.TestCase):
+
+    def setUp(self):
+        self.instance = {
+            "InstanceId": INSTANCE,
+            "State": {"Name": "running"},
+            "ImageId": "ami-096ef200a877f36af",
+            "InstanceType": "t3.small",
+            "SubnetId": "subnet-0d6acd94e5822fc09",
+            "SecurityGroups": [
+                {"GroupId": "sg-0d442aff54a847834"}
+            ],
+            "MetadataOptions": {
+                "HttpTokens": "required",
+                "HttpEndpoint": "enabled",
+            },
+            "IamInstanceProfile": {
+                "Arn": (
+                    "arn:aws:iam::942875993314:instance-profile/"
+                    "NovaCart-EKS-DeploymentWorkerProfile"
+                )
+            },
+            "Tags": [
+                {"Key": "NovaCartPurpose",
+                 "Value": "eks-deployment-worker"},
+                {"Key": "ManagedBy",
+                 "Value": "github-automation"},
+                {"Key": "NovaCartDeploymentId",
+                 "Value": DEPLOYMENT},
+            ],
+        }
+
+    def verify(self, instance):
+        def runner(args):
+            self.assertEqual(
+                args[:3], ["aws", "ec2", "describe-instances"]
+            )
+            self.assertIn(INSTANCE, args)
+            return response(json.dumps([instance]))
+
+        return lifecycle.verify_instance_by_id(
+            INSTANCE, DEPLOYMENT, runner
+        )
+
+    def test_approved_instance(self):
+        self.assertEqual(
+            self.verify(self.instance), INSTANCE
+        )
+
+    def test_wrong_deployment_rejected(self):
+        self.instance["Tags"][-1]["Value"] = "github-999-1"
+        with self.assertRaises(lifecycle.LifecycleError):
+            self.verify(self.instance)
+
+    def test_wrong_ami_rejected(self):
+        self.instance["ImageId"] = "ami-00000000000000000"
+        with self.assertRaises(lifecycle.LifecycleError):
+            self.verify(self.instance)
+
+    def test_wrong_instance_type_rejected(self):
+        self.instance["InstanceType"] = "m7i-flex.large"
+        with self.assertRaises(lifecycle.LifecycleError):
+            self.verify(self.instance)
+
+    def test_wrong_security_group_rejected(self):
+        self.instance["SecurityGroups"] = [
+            {"GroupId": "sg-00000000000000000"}
+        ]
+        with self.assertRaises(lifecycle.LifecycleError):
+            self.verify(self.instance)
+
+    def test_insecure_imds_rejected(self):
+        self.instance["MetadataOptions"]["HttpTokens"] = "optional"
+        with self.assertRaises(lifecycle.LifecycleError):
+            self.verify(self.instance)
+
+    def test_wrong_iam_profile_rejected(self):
+        self.instance["IamInstanceProfile"]["Arn"] = (
+            "arn:aws:iam::942875993314:instance-profile/Other"
+        )
+        with self.assertRaises(lifecycle.LifecycleError):
+            self.verify(self.instance)
+
+
+class DirectVerificationRecoveryTests(unittest.TestCase):
+
+    def test_direct_verified_worker_recovers_from_lookup_delay(self):
+        calls = []
+
+        def runner(args):
+            calls.append(args)
+
+            if "find-existing-worker.sh" in str(args):
+                return response("NONE")
+
+            if "run-instances" in args:
+                return response(json.dumps({
+                    "Instances": [{"InstanceId": INSTANCE}]
+                }))
+
+            if "create-worker-cleanup-schedule.sh" in str(args):
+                return response("PASS: AWS cleanup schedule verified")
+
+            raise AssertionError(f"Unexpected command: {args}")
+
+        with patch.object(
+            lifecycle, "verify_instance_by_id",
+            return_value=INSTANCE
+        ) as verify:
+            with patch.object(
+                lifecycle.time, "sleep", return_value=None
+            ):
+                result = lifecycle.launch_and_schedule(
+                    DEPLOYMENT, CONFIG, runner
+                )
+
+        self.assertEqual(result, INSTANCE)
+        verify.assert_called()
+        self.assertTrue(any(
+            "create-worker-cleanup-schedule.sh" in str(call)
+            for call in calls
+        ))
+
+
+class DirectRecoveryCleanupTests(unittest.TestCase):
+
+    def test_scheduler_failure_after_direct_recovery_terminates_worker(self):
+        calls = []
+
+        def runner(args):
+            calls.append(args)
+
+            if "find-existing-worker.sh" in str(args):
+                return response("NONE")
+
+            if "run-instances" in args:
+                return response(json.dumps({
+                    "Instances": [{"InstanceId": INSTANCE}]
+                }))
+
+            if "create-worker-cleanup-schedule.sh" in str(args):
+                return response("", code=1)
+
+            if args[:3] == ["aws", "ec2", "terminate-instances"]:
+                self.assertIn(INSTANCE, args)
+                return response("{}")
+
+            if args[:4] == [
+                "aws", "ec2", "wait", "instance-terminated"
+            ]:
+                self.assertIn(INSTANCE, args)
+                return response("")
+
+            raise AssertionError(f"Unexpected command: {args}")
+
+        with patch.object(
+            lifecycle, "verify_instance_by_id",
+            return_value=INSTANCE
+        ) as verify:
+            with patch.object(
+                lifecycle.time, "sleep", return_value=None
+            ):
+                with self.assertRaises(lifecycle.LifecycleError) as caught:
+                    lifecycle.launch_and_schedule(
+                        DEPLOYMENT, CONFIG, runner
+                    )
+
+        self.assertIn("termination was confirmed", str(caught.exception))
+        self.assertGreaterEqual(verify.call_count, 1)
+        self.assertTrue(any(
+            args[:3] == ["aws", "ec2", "terminate-instances"]
+            for args in calls
+        ))
+        self.assertTrue(any(
+            args[:4] == [
+                "aws", "ec2", "wait", "instance-terminated"
+            ]
+            for args in calls
+        ))
+
+
+class TerminationOwnershipSecurityTests(unittest.TestCase):
+
+    def test_conflicting_lookup_blocks_termination(self):
+        calls = []
+        other_id = "i-11111111111111111"
+
+        def runner(args):
+            calls.append(args)
+
+            if "find-existing-worker.sh" in str(args):
+                return response(other_id)
+
+            raise AssertionError(
+                f"Unexpected AWS operation: {args}"
+            )
+
+        with patch.object(
+            lifecycle, "verify_instance_by_id"
+        ) as direct_verify:
+            with self.assertRaises(lifecycle.LifecycleError):
+                lifecycle.terminate_verified(
+                    INSTANCE, DEPLOYMENT, runner
+                )
+
+        direct_verify.assert_not_called()
+
+        self.assertFalse(any(
+            "terminate-instances" in args for args in calls
+        ))
+
+    def test_failed_direct_verification_blocks_termination(self):
+        calls = []
+
+        def runner(args):
+            calls.append(args)
+
+            if "find-existing-worker.sh" in str(args):
+                return response("NONE")
+
+            raise AssertionError(
+                f"Unexpected AWS operation: {args}"
+            )
+
+        with patch.object(
+            lifecycle,
+            "verify_instance_by_id",
+            side_effect=lifecycle.LifecycleError(
+                "Wrong deployment ownership"
+            )
+        ) as direct_verify:
+            with self.assertRaises(lifecycle.LifecycleError):
+                lifecycle.terminate_verified(
+                    INSTANCE, DEPLOYMENT, runner
+                )
+
+        direct_verify.assert_called_once_with(
+            INSTANCE, DEPLOYMENT, runner
+        )
+
+        self.assertFalse(any(
+            "terminate-instances" in args for args in calls
+        ))
