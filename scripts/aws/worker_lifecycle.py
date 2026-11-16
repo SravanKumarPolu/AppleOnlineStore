@@ -169,7 +169,7 @@ def launch_and_schedule(deployment, config, runner=run_command):
 
     try:
         schedule = runner([
-            "bash", str(SCHEDULER), "--create", instance_id
+            "bash", str(SCHEDULER), "--create", instance_id, deployment
         ])
     except subprocess.TimeoutExpired:
         schedule = subprocess.CompletedProcess(

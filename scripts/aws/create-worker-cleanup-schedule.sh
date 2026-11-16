@@ -7,6 +7,13 @@ ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/NovaCart-EKS-WorkerCleanupSchedulerRol
 
 MODE="${1:---check}"
 INSTANCE_ID="${2:-i-0123456789abcdef0}"
+DEPLOYMENT_ID="${3:-}"
+
+if [[ "$MODE" == "--create" &&
+      ! "$DEPLOYMENT_ID" =~ ^github-[0-9]+-[0-9]+$ ]]; then
+  echo "ERROR: Valid GitHub deployment ID required" >&2
+  exit 1
+fi
 
 if [[ "$MODE" != "--check" && "$MODE" != "--create" ]]; then
   echo "Usage: $0 --check | --create <instance-id>" >&2
@@ -72,12 +79,12 @@ INSTANCE="$(aws ec2 describe-instances \
   --query 'Reservations[0].Instances[0]' \
   --output json)"
 
-python3 - "$INSTANCE" "$INSTANCE_ID" "$ACCOUNT_ID" <<'PY'
+python3 - "$INSTANCE" "$INSTANCE_ID" "$ACCOUNT_ID" "$DEPLOYMENT_ID" <<'PY'
 import json
 import sys
 
 instance = json.loads(sys.argv[1])
-instance_id, account_id = sys.argv[2:]
+instance_id, account_id, deployment_id = sys.argv[2:]
 
 tags = {tag["Key"]: tag["Value"] for tag in instance.get("Tags", [])}
 profile = instance.get("IamInstanceProfile", {}).get("Arn")
@@ -86,6 +93,7 @@ assert instance["InstanceId"] == instance_id
 assert instance["State"]["Name"] in ("pending", "running")
 assert tags.get("NovaCartPurpose") == "eks-deployment-worker"
 assert tags.get("ManagedBy") == "github-automation"
+assert tags.get("NovaCartDeploymentId") == deployment_id
 assert profile == (
     f"arn:aws:iam::{account_id}:instance-profile/"
     "NovaCart-EKS-DeploymentWorkerProfile"
