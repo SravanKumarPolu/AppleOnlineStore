@@ -1,0 +1,38 @@
+name: NovaCart EC2 Worker Lifecycle Tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  worker-tests:
+    name: Test EC2 worker lifecycle
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Verify Python
+        run: python3 --version
+
+      - name: Check Bash syntax
+        run: |
+          bash -n scripts/aws/launch-eks-worker.sh
+          bash -n scripts/aws/find-existing-worker.sh
+          bash -n scripts/aws/create-worker-cleanup-schedule.sh
+
+      - name: Run lifecycle unit tests
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          python3 -m unittest discover \
+            -s scripts/aws/tests \
+            -p 'test_*.py' \
+            -v
