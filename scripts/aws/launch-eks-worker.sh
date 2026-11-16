@@ -18,10 +18,14 @@ USER_DATA="scripts/aws/eks-worker-user-data.sh"
 
 bash -n "$USER_DATA"
 
-ROOT_DEVICE="$(aws ec2 describe-images \
-  --image-ids "$AMI" \
-  --query 'Images[0].RootDeviceName' \
-  --output text)"
+if [[ -n "${NOVACART_ROOT_DEVICE:-}" ]]; then
+  ROOT_DEVICE="$NOVACART_ROOT_DEVICE"
+else
+  ROOT_DEVICE="$(aws ec2 describe-images \
+    --image-ids "$AMI" \
+    --query 'Images[0].RootDeviceName' \
+    --output text)"
+fi
 
 if [[ -z "$ROOT_DEVICE" || "$ROOT_DEVICE" == "None" ]]; then
   echo "Unable to determine AMI root device" >&2
