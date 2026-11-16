@@ -1,0 +1,24 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: novacart-backend-deployer
+  namespace: novacart
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["novacart-backend"]
+    verbs: ["get", "watch", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: novacart-github-backend-deployer
+  namespace: novacart
+subjects:
+  - kind: Group
+    name: novacart-backend-deployers
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: novacart-backend-deployer
+  apiGroup: rbac.authorization.k8s.io
