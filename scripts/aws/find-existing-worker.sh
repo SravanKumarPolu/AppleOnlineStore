@@ -51,6 +51,20 @@ assert tags.get("NovaCartDeploymentId") == deployment_id
 instance_id = instance["InstanceId"]
 state = instance["State"]["Name"]
 
+expected_profile = (
+    "arn:aws:iam::942875993314:instance-profile/"
+    "NovaCart-EKS-DeploymentWorkerProfile"
+)
+
+if instance.get("ImageId") != "ami-096ef200a877f36af":
+    sys.exit("ERROR: Existing worker has unexpected AMI")
+
+if instance.get("InstanceType") != "t3.small":
+    sys.exit("ERROR: Existing worker has unexpected instance type")
+
+if instance.get("IamInstanceProfile", {}).get("Arn") != expected_profile:
+    sys.exit("ERROR: Existing worker has unexpected IAM profile")
+
 if state not in ("pending", "running"):
     print(
         f"ERROR: Existing worker {instance_id} is {state}",
