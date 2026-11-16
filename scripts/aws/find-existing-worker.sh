@@ -65,6 +65,21 @@ if instance.get("InstanceType") != "t3.small":
 if instance.get("IamInstanceProfile", {}).get("Arn") != expected_profile:
     sys.exit("ERROR: Existing worker has unexpected IAM profile")
 
+if instance.get("SubnetId") != "subnet-0d6acd94e5822fc09":
+    sys.exit("ERROR: Existing worker has unexpected subnet")
+
+security_groups = {
+    group["GroupId"]
+    for group in instance.get("SecurityGroups", [])
+}
+if security_groups != {"sg-0d442aff54a847834"}:
+    sys.exit("ERROR: Existing worker has unexpected security groups")
+
+metadata = instance.get("MetadataOptions", {})
+if (metadata.get("HttpTokens") != "required"
+        or metadata.get("HttpEndpoint") != "enabled"):
+    sys.exit("ERROR: Existing worker has insecure metadata settings")
+
 if state not in ("pending", "running"):
     print(
         f"ERROR: Existing worker {instance_id} is {state}",
