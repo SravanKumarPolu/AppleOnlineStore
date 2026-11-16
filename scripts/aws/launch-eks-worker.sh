@@ -125,7 +125,8 @@ config = {
             "ResourceType": resource_type,
             "Tags": [
                 {"Key": "NovaCartPurpose", "Value": "eks-deployment-worker"},
-                {"Key": "ManagedBy", "Value": "github-automation"}
+                {"Key": "ManagedBy", "Value": "github-automation"},
+                {"Key": "NovaCartDeploymentId", "Value": deployment_id}
             ]
         }
         for resource_type in ("instance", "volume")
