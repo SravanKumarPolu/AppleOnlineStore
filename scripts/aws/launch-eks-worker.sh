@@ -1,8 +1,38 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "${1:-}" != "--check" ]]; then
-  echo "Only --check is implemented. EC2 launch is disabled." >&2
+MODE="${1:---check}"
+
+if [[ "$MODE" != "--check" && "$MODE" != "--launch" ]]; then
+  echo "Usage: $0 --check | --launch" >&2
+  exit 1
+fi
+
+if [[ "$MODE" == "--launch" ]]; then
+  if [[ "${GITHUB_ACTIONS:-}" != "true" ||
+        "${GITHUB_REF:-}" != "refs/heads/main" ||
+        "${GITHUB_REPOSITORY:-}" != "SravanKumarPolu/AppleOnlineStore" ]]; then
+    echo "BLOCKED: Launch requires the approved GitHub main-branch workflow." >&2
+    exit 1
+  fi
+
+  if [[ ! "${NOVACART_DEPLOYMENT_ID:-}" =~ ^github-[0-9]+-[0-9]+$ ]]; then
+    echo "BLOCKED: Valid GitHub deployment ID is required." >&2
+    exit 1
+  fi
+
+  CALLER_ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+  CALLER_ARN="$(aws sts get-caller-identity --query Arn --output text)"
+
+  if [[ "$CALLER_ACCOUNT" != "942875993314" ||
+        "$CALLER_ARN" != arn:aws:sts::942875993314:assumed-role/novacart-github-eks-deploy/* ]]; then
+    echo "BLOCKED: Unexpected AWS deployment identity." >&2
+    exit 1
+  fi
+
+  echo "PASS: GitHub execution context verified"
+  echo "PASS: Approved AWS deployment role verified"
+  echo "BLOCKED: Real EC2 launch is not implemented yet." >&2
   exit 1
 fi
 
@@ -41,6 +71,21 @@ from pathlib import Path
 
 root, ami, subnet, sg, profile, user_data = sys.argv[1:]
 
+import os
+import re
+
+deployment_id = os.environ.get(
+    "NOVACART_DEPLOYMENT_ID",
+    "local-check-only"
+)
+
+assert re.fullmatch(
+    r"[A-Za-z0-9-]{1,48}",
+    deployment_id
+), "Invalid deployment ID"
+
+client_token = f"novacart-{deployment_id}"
+
 assert Path(user_data).is_file()
 
 config = {
@@ -50,7 +95,7 @@ config = {
     "CreditSpecification": {"CpuCredits": "standard"},
     "MinCount": 1,
     "MaxCount": 1,
-    "ClientToken": "novacart-local-check-only",
+    "ClientToken": client_token,
     "IamInstanceProfile": {"Name": profile},
     "NetworkInterfaces": [{
         "DeviceIndex": 0,
@@ -75,13 +120,17 @@ config = {
             "DeleteOnTermination": True
         }
     }],
-    "TagSpecifications": [{
-        "ResourceType": "instance",
-        "Tags": [
-            {"Key": "NovaCartPurpose", "Value": "eks-deployment-worker"},
-            {"Key": "ManagedBy", "Value": "github-automation"}
-        ]
-    }]
+    "TagSpecifications": [
+        {
+            "ResourceType": resource_type,
+            "Tags": [
+                {"Key": "NovaCartPurpose", "Value": "eks-deployment-worker"},
+                {"Key": "ManagedBy", "Value": "github-automation"},
+                {"Key": "NovaCartDeploymentId", "Value": deployment_id}
+            ]
+        }
+        for resource_type in ("instance", "volume")
+    ]
 }
 
 assert config["MaxCount"] == 1

@@ -94,37 +94,51 @@ assert profile == (
 print("PASS: Approved deployment worker verified")
 PY
 
-aws scheduler create-schedule \
+if ! aws scheduler create-schedule \
   --region "$REGION" \
   --name "$SCHEDULE_NAME" \
   --schedule-expression "at(${EXPIRY})" \
   --schedule-expression-timezone UTC \
   --flexible-time-window '{"Mode":"OFF"}' \
   --action-after-completion DELETE \
-  --target "$TARGET"
+  --target "$TARGET"; then
+  echo "NOTICE: Schedule creation returned an error; checking AWS for an existing schedule." >&2
+fi
 
 SCHEDULE="$(aws scheduler get-schedule \
   --region "$REGION" \
   --name "$SCHEDULE_NAME" \
   --output json)"
 
-python3 - "$SCHEDULE" "$INSTANCE_ID" "$ROLE_ARN" "$EXPIRY" <<'PY'
+python3 - "$SCHEDULE" "$INSTANCE_ID" "$ROLE_ARN" <<'PY'
 import json
+import re
 import sys
+from datetime import datetime, timedelta, timezone
 
 schedule = json.loads(sys.argv[1])
-instance_id, role_arn, expiry = sys.argv[2:]
+instance_id, role_arn = sys.argv[2:]
 
 target = schedule["Target"]
 payload = json.loads(target["Input"])
 
 assert schedule["State"] == "ENABLED"
-assert schedule["ScheduleExpression"] == f"at({expiry})"
+expression = schedule["ScheduleExpression"]
+assert re.fullmatch(r"at\(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\)", expression)
+expiry = datetime.strptime(
+    expression[3:-1], "%Y-%m-%dT%H:%M:%S"
+).replace(tzinfo=timezone.utc)
+
+remaining = expiry - datetime.now(timezone.utc)
+assert timedelta(minutes=5) < remaining <= timedelta(minutes=65)
+assert schedule["ScheduleExpressionTimezone"] == "UTC"
+assert schedule["ActionAfterCompletion"] == "DELETE"
+assert schedule["FlexibleTimeWindow"]["Mode"] == "OFF"
 assert target["RoleArn"] == role_arn
 assert target["Arn"] == "arn:aws:scheduler:::aws-sdk:ec2:terminateInstances"
 assert payload["InstanceIds"] == [instance_id]
 
 print("PASS: AWS cleanup schedule verified")
 print("Schedule:", schedule["Name"])
-print("Expiry (UTC):", expiry)
+print("Expiry (UTC):", expiry.isoformat())
 PY
