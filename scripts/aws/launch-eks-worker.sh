@@ -41,6 +41,21 @@ from pathlib import Path
 
 root, ami, subnet, sg, profile, user_data = sys.argv[1:]
 
+import os
+import re
+
+deployment_id = os.environ.get(
+    "NOVACART_DEPLOYMENT_ID",
+    "local-check-only"
+)
+
+assert re.fullmatch(
+    r"[A-Za-z0-9-]{1,48}",
+    deployment_id
+), "Invalid deployment ID"
+
+client_token = f"novacart-{deployment_id}"
+
 assert Path(user_data).is_file()
 
 config = {
@@ -50,7 +65,7 @@ config = {
     "CreditSpecification": {"CpuCredits": "standard"},
     "MinCount": 1,
     "MaxCount": 1,
-    "ClientToken": "novacart-local-check-only",
+    "ClientToken": client_token,
     "IamInstanceProfile": {"Name": profile},
     "NetworkInterfaces": [{
         "DeviceIndex": 0,
