@@ -30,6 +30,7 @@ fi
 
 python3 - "$ROOT_DEVICE" "$AMI" "$SUBNET" \
   "$SECURITY_GROUP" "$INSTANCE_PROFILE" "$USER_DATA" <<'PY'
+import base64
 import json
 import sys
 from pathlib import Path
@@ -40,6 +41,7 @@ assert Path(user_data).is_file()
 
 config = {
     "ImageId": ami,
+    "UserData": base64.b64encode(Path(user_data).read_bytes()).decode("ascii"),
     "InstanceType": "t3.small",
     "MinCount": 1,
     "MaxCount": 1,
@@ -78,6 +80,8 @@ config = {
 }
 
 assert config["MaxCount"] == 1
+assert base64.b64decode(config["UserData"]) == Path(user_data).read_bytes()
+assert len(Path(user_data).read_bytes()) <= 16384
 assert config["MetadataOptions"]["HttpTokens"] == "required"
 assert config["BlockDeviceMappings"][0]["Ebs"]["Encrypted"]
 assert config["BlockDeviceMappings"][0]["Ebs"]["DeleteOnTermination"]
