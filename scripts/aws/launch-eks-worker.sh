@@ -1,8 +1,38 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "${1:-}" != "--check" ]]; then
-  echo "Only --check is implemented. EC2 launch is disabled." >&2
+MODE="${1:---check}"
+
+if [[ "$MODE" != "--check" && "$MODE" != "--launch" ]]; then
+  echo "Usage: $0 --check | --launch" >&2
+  exit 1
+fi
+
+if [[ "$MODE" == "--launch" ]]; then
+  if [[ "${GITHUB_ACTIONS:-}" != "true" ||
+        "${GITHUB_REF:-}" != "refs/heads/main" ||
+        "${GITHUB_REPOSITORY:-}" != "SravanKumarPolu/AppleOnlineStore" ]]; then
+    echo "BLOCKED: Launch requires the approved GitHub main-branch workflow." >&2
+    exit 1
+  fi
+
+  if [[ -z "${NOVACART_DEPLOYMENT_ID:-}" ]]; then
+    echo "BLOCKED: NOVACART_DEPLOYMENT_ID is required." >&2
+    exit 1
+  fi
+
+  CALLER_ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+  CALLER_ARN="$(aws sts get-caller-identity --query Arn --output text)"
+
+  if [[ "$CALLER_ACCOUNT" != "942875993314" ||
+        "$CALLER_ARN" != arn:aws:sts::942875993314:assumed-role/novacart-github-eks-deploy/* ]]; then
+    echo "BLOCKED: Unexpected AWS deployment identity." >&2
+    exit 1
+  fi
+
+  echo "PASS: GitHub execution context verified"
+  echo "PASS: Approved AWS deployment role verified"
+  echo "BLOCKED: Real EC2 launch is not implemented yet." >&2
   exit 1
 fi
 
