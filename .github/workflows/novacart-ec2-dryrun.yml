@@ -36,7 +36,8 @@ jobs:
       - name: Generate EC2 launch request
         shell: bash
         run: |
-          bash scripts/aws/launch-eks-worker.sh --check |
+          NOVACART_ROOT_DEVICE=/dev/xvda \
+            bash scripts/aws/launch-eks-worker.sh --check |
             python3 -c '
           import json, sys
           output = sys.stdin.read()
