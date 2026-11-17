@@ -95,4 +95,3 @@ jobs:
         env:
           KUBECONFIG: ${{ runner.temp }}/novacart-kubeconfig
         run: rm -f "$KUBECONFIG"
-
