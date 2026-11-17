@@ -1,0 +1,98 @@
+
+name: NovaCart EKS Backend Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_sha:
+        description: "Full 40-character SHA of an existing backend image in ECR"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: novacart-eks-backend-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy-backend:
+    name: Deploy backend to EKS
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, macOS, X64, novacart-eks-deploy]
+
+    permissions:
+      contents: read
+      id-token: write
+
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout trusted main branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Add kubectl to PATH
+        shell: bash
+        run: echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Validate image SHA
+        shell: bash
+        env:
+          TARGET_SHA: ${{ inputs.image_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "Invalid image SHA"
+            exit 1
+          }
+
+      - name: Authenticate using GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
+        with:
+          role-to-assume: arn:aws:iam::942875993314:role/novacart-github-eks-deploy
+          aws-region: us-east-1
+          allowed-account-ids: '942875993314'
+
+      - name: Verify AWS deployment identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+          ARN="$(aws sts get-caller-identity --query Arn --output text)"
+          test "$ACCOUNT" = "942875993314"
+          [[ "$ARN" == arn:aws:sts::942875993314:assumed-role/novacart-github-eks-deploy/* ]]
+
+      - name: Configure EKS access
+        shell: bash
+        env:
+          KUBECONFIG: ${{ runner.temp }}/novacart-kubeconfig
+        run: |
+          set -euo pipefail
+          aws eks update-kubeconfig \
+            --region us-east-1 \
+            --name novacart-dev-eks \
+            --alias novacart-dev-eks \
+            --kubeconfig "$KUBECONFIG"
+
+          kubectl --context novacart-dev-eks \
+            -n novacart auth can-i patch deployment/novacart-backend
+
+      - name: Deploy backend and verify rollout
+        shell: bash
+        env:
+          TARGET_SHA: ${{ inputs.image_sha }}
+          KUBECONFIG: ${{ runner.temp }}/novacart-kubeconfig
+        run: |
+          set -euo pipefail
+          bash scripts/deploy-eks-backend.sh --apply "$TARGET_SHA"
+
+      - name: Remove temporary Kubernetes configuration
+        if: always()
+        shell: bash
+        env:
+          KUBECONFIG: ${{ runner.temp }}/novacart-kubeconfig
+        run: rm -f "$KUBECONFIG"
+
