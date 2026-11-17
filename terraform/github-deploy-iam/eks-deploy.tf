@@ -21,6 +21,17 @@ data "aws_iam_policy_document" "github_eks_describe" {
       "arn:aws:eks:us-east-1:942875993314:cluster/novacart-dev-eks"
     ]
   }
+
+  # Required by scripts/deploy-eks-backend.sh
+  statement {
+    sid     = "DescribeNovaCartBackendECR"
+    effect  = "Allow"
+    actions = ["ecr:DescribeImages"]
+
+    resources = [
+      "arn:aws:ecr:us-east-1:942875993314:repository/novacart/backend"
+    ]
+  }
 }
 
 resource "aws_iam_role_policy" "github_eks_describe" {
