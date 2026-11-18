@@ -1,3 +1,4 @@
+
 # NovaCart Phase 4 - EKS Managed Add-ons
 
 resource "aws_eks_addon" "vpc_cni" {
@@ -14,12 +15,9 @@ resource "aws_eks_addon" "vpc_cni" {
 
   depends_on = [
     aws_iam_role_policy_attachment.eks_cni_policy,
-    aws_eks_node_group.novacart,
     aws_eks_addon.pod_identity_agent
   ]
 }
-
-
 
 resource "aws_eks_addon" "coredns" {
   cluster_name  = aws_eks_cluster.novacart.name
@@ -27,12 +25,7 @@ resource "aws_eks_addon" "coredns" {
   addon_version = "v1.14.7-eksbuild.35"
 
   resolve_conflicts_on_create = "OVERWRITE"
-
-  depends_on = [
-    aws_eks_node_group.novacart
-  ]
 }
-
 
 resource "aws_eks_addon" "kube_proxy" {
   cluster_name  = aws_eks_cluster.novacart.name
