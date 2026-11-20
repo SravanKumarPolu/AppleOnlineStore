@@ -42,6 +42,13 @@ flowchart TB
 
 The AWS layout, its limits, and the CI/CD boundary are in [`docs/architecture/DEPLOYMENT_ARCHITECTURE.md`](docs/architecture/DEPLOYMENT_ARCHITECTURE.md). Commands are in [`docs/06-DEPLOYMENT.md`](docs/06-DEPLOYMENT.md).
 
+**System diagrams and technical case study:** browse the
+[`docs/architecture/`](docs/architecture/) diagram index for application,
+deployment, component, authentication, checkout, and data-model diagrams.
+The [checkout reliability case study](docs/case-studies/CHECKOUT_RELIABILITY.md)
+explains the design decisions behind durable stock reservations and PayPal
+reconciliation.
+
 ## Run locally
 
 Use the `.env.example` files. Do not commit real `.env` files.
@@ -165,6 +172,8 @@ Monitoring, alerting, and log aggregation are not implemented. Health endpoints 
 | [`docs/architecture/DEPLOYMENT_ARCHITECTURE.md`](docs/architecture/DEPLOYMENT_ARCHITECTURE.md) | Current deployment diagrams |
 | [`docs/architecture/SYSTEM_ARCHITECTURE.md`](docs/architecture/SYSTEM_ARCHITECTURE.md) | Application architecture as of 2026-10-26 |
 | [`docs/architecture/CHECKOUT_PAYMENT_FLOW.md`](docs/architecture/CHECKOUT_PAYMENT_FLOW.md) | Checkout and payment |
+| [`docs/architecture/`](docs/architecture/) | Diagram index and architecture views |
+| [`docs/case-studies/CHECKOUT_RELIABILITY.md`](docs/case-studies/CHECKOUT_RELIABILITY.md) | Technical case study: recoverable checkout |
 | [`docs/review/DOCUMENTATION_REVIEW.md`](docs/review/DOCUMENTATION_REVIEW.md) | What this refresh verified |
 | [`docs/devops/`](docs/devops/) | Phase 1 records (preserved for their dates) |
 | [`AGENTS.md`](AGENTS.md) | Repository guide for engineers and agents |
