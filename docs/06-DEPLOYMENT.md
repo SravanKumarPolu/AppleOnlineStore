@@ -115,14 +115,15 @@ Ingress paths, both hosts:
 | `/socket.io` | `backend:3001` |
 | `/` | `frontend:8080` |
 
-There is no host rule for `admin.novakart.xyz`. The admin Service is ClusterIP. With cluster credentials you can inspect it locally:
+There is no host rule for `admin.novakart.xyz`. The admin Service is ClusterIP. The owner reports using the dashboard locally, not through a public admin domain, and reports this Kubernetes port-forward as a previously verified access method:
 
 ```bash
-kubectl -n novacart port-forward deployment/novacart-admin 8081:8080
+kubectl --context novacart-aws \
+  -n novacart port-forward deployment/novacart-admin 8081:8080
 # http://127.0.0.1:8081
 ```
 
-That command does not create DNS or a certificate.
+This tunnels the admin Deployment to localhost; it does not create DNS or a certificate. The prior verification is owner-reported and the current cluster state was not rechecked for this update.
 
 The Ingress is annotated for the AWS Load Balancer Controller (internet-facing, TLS redirect, a certificate ARN, two subnet ids). The ALB is not a `aws_lb` resource in Terraform. Account ids, subnet ids, and certificate ARNs live in the manifests; copy them from those files when you operate the account, and do not publish new copies into unrelated docs.
 
@@ -149,7 +150,23 @@ Apply steps are omitted on purpose. The tree contains environment-specific IAM, 
 
 Pull requests build and scan images. They do not push them. Frontend and admin ECR repositories exist in Terraform, and `k8s/aws` pins frontend and admin ECR tags, but `novacart-ci-cd.yml` pushes only the backend image to ECR.
 
-It is inaccurate to say all three applications deploy to EKS on every push. Successful recent workflow runs were not inspected for this update.
+It is inaccurate to say all three applications deploy to EKS on every push.
+
+### Latest observed CI run
+
+[Run 44729529085](https://github.com/SravanKumarPolu/AppleOnlineStore/actions/runs/44729529085) was a pull-request run on 20 November 2026 for commit `498c558`. The overall run failed:
+
+| Job | Result | Log evidence |
+| --- | --- | --- |
+| Verify backend, frontend, admin | Passed | All three verification jobs completed successfully |
+| Build and scan backend | Passed | Docker build and Trivy scan completed successfully |
+| Build and scan frontend | Failed | Docker build passed; the `Scan image with Trivy` step failed |
+| Build and scan admin | Failed | Docker build passed; the `Scan image with Trivy` step failed |
+| GHCR/ECR publishing | Skipped | Publishing steps are conditional on a push to `main`; this run was a pull request |
+
+Both failed Trivy steps scanned Alpine 3.24.2 images and reported the same six fixable `nginx` OS-package vulnerabilities: 2 HIGH and 4 CRITICAL. The installed package was `nginx 1.30.6-r1`; Trivy's output lists `1.30.7-r0` as the fixed version for the package. The reported CVEs were `CVE-2026-113425`, `CVE-2026-121810`, `CVE-2026-123007`, `CVE-2026-123633`, `CVE-2026-118899`, and `CVE-2026-123634`. With `exit-code: '1'`, `severity: CRITICAL,HIGH`, and `ignore-unfixed: true`, those findings caused the scan steps to exit 1.
+
+The failure is therefore in vulnerability scanning, not Docker image construction, registry publishing, AWS authentication, or permissions. GHCR/ECR publishing was not attempted in this pull-request run. Recommended follow-up: refresh the Nginx runtime base image used by the storefront and admin images to a build containing the fixed package, then rebuild and confirm the Trivy scans. No Dockerfile or workflow change was made as part of this documentation update.
 
 ## 6. PayPal
 

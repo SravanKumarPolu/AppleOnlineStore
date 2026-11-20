@@ -4,7 +4,7 @@
 
 NovaCart is a full-stack e-commerce system for a consumer-electronics catalog. It includes a customer storefront, an operator dashboard, a REST and realtime API, PayPal checkout, and infrastructure-as-code. The product name is **NovaCart**. Older assets and reports may still say AppleOnlineStore, SKR E-Commerce, or SKR Store; those names are historical.
 
-> **Evidence boundary (documentation integrated 20 November 2026).** This README describes source code, committed infrastructure, and recorded test runs. A manifest or workflow shows that the artifact exists. It does not show that an AWS account is serving traffic today. This pass inspected the repository. It did not redeploy, call AWS, or rerun the test suites.
+> **Evidence boundary (20 November 2026).** This README describes source code, committed infrastructure, and recorded test runs. A manifest or workflow shows that the artifact exists; it does not show that an AWS account is serving traffic today. This pass inspected repository files and GitHub Actions run logs. It did not redeploy, call AWS, or rerun the test suites.
 
 ## Applications
 
@@ -114,6 +114,8 @@ Use the report that matches the date of the run. The 2026-10-26 report does not 
 
 That pair of workflows does not deploy the storefront and admin to EKS on every push. Two other manual workflows only check an AWS identity (`novacart-eks-auth.yml`, `aws-oidc-test.yml`). `novacart-worker-tests.yml` syntax-checks and unit-tests the EC2 worker scripts. It does not roll out the applications.
 
+**Latest observed CI run:** [run 44729529085](https://github.com/SravanKumarPolu/AppleOnlineStore/actions/runs/44729529085) for commit `498c558` failed overall. All three Verify jobs and the backend image build/scan passed. Frontend and admin image builds passed, but each Trivy scan failed on six fixable NGINX OS findings (2 HIGH, 4 CRITICAL; installed `nginx` `1.30.6-r1`, fixed version reported as `1.30.7-r0`). GHCR/ECR publishing was skipped because this was a pull-request run; no publishing, authentication, or permission failure was observed. See [the deployment guide](docs/06-DEPLOYMENT.md#latest-observed-ci-run) for the CVE list and job details. Do not treat this run or the entire pipeline as passing.
+
 ## AWS and Kubernetes in this repository
 
 | Path | What is committed |
@@ -122,7 +124,17 @@ That pair of workflows does not deploy the storefront and admin to EKS on every 
 | [`k8s/`](k8s/) | Local Deployments and Services, backend HPA (1–3 replicas), Redis for local multi-replica Socket.IO, Gateway HTTPRoutes on `*.novacart.localhost` |
 | [`k8s/aws/`](k8s/aws/) | Frontend, admin, and backend Deployments and Services at **one replica** each, plus an ALB Ingress |
 
-The Ingress hosts are `novakart.xyz` and `www.novakart.xyz`. Paths `/` go to the storefront, and `/api` and `/socket.io` go to the backend. **No Ingress rule names `admin.novakart.xyz`.** The admin Deployment and ClusterIP Service are in the manifests. A public admin hostname is not established by this repository. Local Gateway hostnames `shop.novacart.localhost` and `admin.novacart.localhost` are local names, not that public host.
+The Ingress hosts are `novakart.xyz` and `www.novakart.xyz`. Paths `/` go to the storefront, and `/api` and `/socket.io` go to the backend. **No Ingress rule names `admin.novakart.xyz`.** The admin Deployment and ClusterIP Service are in the manifests. A public admin hostname is not established by this repository.
+
+The owner reports using the admin dashboard locally, not through a public admin domain. The previously verified Kubernetes access method was a port-forward:
+
+```bash
+kubectl --context novacart-aws \
+  -n novacart port-forward deployment/novacart-admin 8081:8080
+# http://127.0.0.1:8081
+```
+
+This local URL is reached through the Kubernetes context and port-forward; it does not establish public DNS or HTTPS. The local Gateway names `shop.novacart.localhost` and `admin.novacart.localhost` are separate routes.
 
 The AWS manifests pin ECR image tags. Those tags are desired state in git. They are not proof the cluster is running, that DNS resolves, or that TLS is valid today. Terraform comments in `ecr.tf` still say “do not apply yet”; treat apply as an owner decision.
 
