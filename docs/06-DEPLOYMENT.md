@@ -154,7 +154,7 @@ It is inaccurate to say all three applications deploy to EKS on every push.
 
 ### Latest observed CI run
 
-[Run 44729529085](https://github.com/SravanKumarPolu/AppleOnlineStore/actions/runs/44729529085) was a pull-request run on 20 November 2026 for commit `498c558`. The overall run failed:
+[Run 44732558120, attempt 2](https://github.com/SravanKumarPolu/AppleOnlineStore/actions/runs/44732558120/attempts/2) was a pull-request run on 20 November 2026 for commit `483a25e`. The screenshot supplied with this update shows the first attempt; attempt 2 still failed the frontend and admin scans with the same findings. The overall run failed:
 
 | Job | Result | Log evidence |
 | --- | --- | --- |
@@ -164,9 +164,17 @@ It is inaccurate to say all three applications deploy to EKS on every push.
 | Build and scan admin | Failed | Docker build passed; the `Scan image with Trivy` step failed |
 | GHCR/ECR publishing | Skipped | Publishing steps are conditional on a push to `main`; this run was a pull request |
 
-Both failed Trivy steps scanned Alpine 3.24.2 images and reported the same six fixable `nginx` OS-package vulnerabilities: 2 HIGH and 4 CRITICAL. The installed package was `nginx 1.30.6-r1`; Trivy's output lists `1.30.7-r0` as the fixed version for the package. The reported CVEs were `CVE-2026-113425`, `CVE-2026-121810`, `CVE-2026-123007`, `CVE-2026-123633`, `CVE-2026-118899`, and `CVE-2026-123634`. With `exit-code: '1'`, `severity: CRITICAL,HIGH`, and `ignore-unfixed: true`, those findings caused the scan steps to exit 1.
+Both failed Trivy steps scanned Alpine 3.24.2 images and reported six `nginx` OS-package vulnerabilities: four CRITICAL (`CVE-2026-113425`, `CVE-2026-121810`, `CVE-2026-123007`, `CVE-2026-123633`) and two HIGH (`CVE-2026-118899`, `CVE-2026-123634`). The installed package was `nginx 1.30.6-r1`; Trivy listed `1.30.7-r0` as fixed. The log also warns that Alpine 3.24 is not on Trivy's EOL list; that warning was not the step's failure cause. With `exit-code: '1'`, `severity: CRITICAL,HIGH`, and `ignore-unfixed: true`, these findings caused both scans to exit 1.
 
-The failure is therefore in vulnerability scanning, not Docker image construction, registry publishing, AWS authentication, or permissions. GHCR/ECR publishing was not attempted in this pull-request run. Recommended follow-up: refresh the Nginx runtime base image used by the storefront and admin images to a build containing the fixed package, then rebuild and confirm the Trivy scans. No Dockerfile or workflow change was made as part of this documentation update.
+The failure was in vulnerability scanning, not Docker image construction, registry publishing, AWS authentication, or permissions. GHCR/ECR publishing was not attempted in this pull-request run.
+
+#### Dockerfile remediation and local validation
+
+The previous `nginxinc/nginx-unprivileged:stable-alpine` image pinned NGINX and its bundled modules to exact package versions. Its existing `apk upgrade --no-cache` updated other Alpine packages but could not replace the pinned NGINX package with `1.30.7-r0`. The versioned `stable-alpine3.24` tag resolved to the same image digest and package versions during verification; the Debian-based `stable` tag also contained NGINX `1.30.6`. The frontend and admin Dockerfiles now use the maintained `nginxinc/nginx-unprivileged:mainline-alpine3.24` tag instead. The tested image was Alpine 3.24 with NGINX and its modules at `1.31.7-r1`, above the reported fixed version. The existing NGINX configuration, app build stages, port 8080, and unprivileged UID 101 were retained. The trade-off is moving from NGINX's stable stream to its mainline stream; no configuration incompatibility was observed in the local checks below.
+
+On 20 November 2026, both images were rebuilt with `--pull --no-cache`. Trivy 0.70.0, using the workflow's OS/library vulnerability scanner and HIGH/CRITICAL failure policy, found zero vulnerabilities in either image. A separate all-severity scan without `ignore-unfixed` also returned zero, so no fixed or unfixed vulnerability findings were reported. Frontend tests passed (26 files / 170 tests), and admin tests passed (15 files / 85 tests). Both containers started as UID 101, passed `nginx -t`, and returned HTTP 200 for `/`.
+
+The Alpine 3.24 EOL-list warning remains. No scan policy or workflow was changed. These are local results only: GitHub Actions has not yet rerun on the Dockerfile changes, so the latest remote run above remains failed until a new run verifies them.
 
 ## 6. PayPal
 
