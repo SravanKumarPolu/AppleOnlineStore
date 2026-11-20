@@ -4,6 +4,8 @@
 **Scope:** Full repository (`frontend/`, `admin/`, `backend/`, `docs/`) inspected file-by-file against the supplied GitDiagram system picture.
 **Status:** Pre-DevOps stabilization phase. This report reflects the source code **as verified after** the Phase 2–4 corrections described in `docs/testing/SECURITY_REGRESSION.md`.
 
+**Realtime status update (20 November 2026):** §3.1 below records the 2026-10-26 state and is no longer current. The admin app now opens an authenticated Socket.IO connection and consumes order events; see [DEPLOYMENT_ARCHITECTURE.md](./DEPLOYMENT_ARCHITECTURE.md). The historical audit finding is retained with its date.
+
 ---
 
 ## 1. How the supplied diagram maps to reality
@@ -33,8 +35,8 @@ That topological shape is **correct**. Every box in it exists in the code. The d
 
 ## 3. Incorrect or misleading relationships (corrected)
 
-### 3.1 Socket.IO pushes order updates to **both** frontends
-The diagram draws "Order updates" from Socket.IO to both the Storefront and the Admin Console. **Only the storefront consumes it.** `admin/` has no `socket.io-client` dependency at all (verified: zero imports). The backend *supports* admin realtime (`admin_room`, `admin_join_order` events), but nothing connects to it. The corrected diagrams mark the admin realtime leg as **backend capability, currently unused by the admin UI**.
+### 3.1 Historical Socket.IO finding (as of 2026-10-26)
+At the audit date, **only the storefront consumed Socket.IO order updates**; `admin/` had no `socket.io-client` dependency or imports. The backend already supported an admin room, but no admin client used it. This finding was accurate for that snapshot and was superseded by the admin `RealtimeProvider` and Orders-page subscriptions added later.
 
 ### 3.2 The old GitDiagram's controller→model arrows
 The original GitDiagram (pre-correction) drew several controller→model edges to the wrong collections. Verified ground truth:

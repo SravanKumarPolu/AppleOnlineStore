@@ -23,7 +23,7 @@ ENV VITE_PAYPAL_CLIENT_ID=${VITE_PAYPAL_CLIENT_ID}
 RUN npm run build
 
 # Stage 2: Non-root Nginx
-FROM nginxinc/nginx-unprivileged:stable-alpine AS runtime
+FROM nginxinc/nginx-unprivileged:mainline-alpine3.24 AS runtime
 
 # Temporarily use root to install security updates
 USER root

@@ -200,8 +200,8 @@ environment-based (a known limitation — see [08-SECURITY.md](./08-SECURITY.md)
 | Startup configuration guardrails | ✅ Implemented | Fail-fast on live-PayPal-with-placeholder creds; prod-without-JWT_SECRET |
 | Log redaction (secrets never logged) | ✅ Implemented | Canary-tested |
 | Automated tests | ✅ Implemented (backend 42 suites/416 · storefront 24 files/125 · admin 13 files/70 · storefront E2E 3 spec files/17 tests × 3 engines = 51, incl. COD+Card checkout and axe a11y — verified by execution 2026-10-26) | See [07-TESTING_PLAN.md](./07-TESTING_PLAN.md) and [docs/10-FINAL-STABILIZATION-REPORT.md](./10-FINAL-STABILIZATION-REPORT.md) |
-| Docker / CI/CD / IaC | 📋 Planned | No infrastructure files in the repo; see [06-DEPLOYMENT.md](./06-DEPLOYMENT.md) |
-| Monitoring / alerting / log aggregation | 📋 Planned | Phase 8 of the DevOps roadmap |
+| Docker images, Compose, Kubernetes manifests, Terraform, GitHub Actions | ✅ Implemented as repository artifacts | Dockerfiles, `compose.yaml`, `k8s/` and `k8s/aws/`, `terraform/`, and `.github/workflows/` are in the tree. CI publishes images; EKS rollout is a manual backend-only workflow. A live cluster and `admin.novakart.xyz` are **UNVERIFIED**. See [06-DEPLOYMENT.md](./06-DEPLOYMENT.md) and [architecture/DEPLOYMENT_ARCHITECTURE.md](./architecture/DEPLOYMENT_ARCHITECTURE.md) |
+| Monitoring / alerting / log aggregation | 📋 Planned | Health endpoints and log lines exist. No metrics, alerting, or log-aggregation product is in the repo |
 | Accessibility (a11y) | 🟡 Partial | **Automated axe scans pass** on the core screens across Chromium/Firefox/WebKit (part of the 51 E2E checks). Manual screen-reader / 200 %-zoom acceptance **not yet executed** — per-screen checklist: [07-TESTING_PLAN.md](./07-TESTING_PLAN.md) §7 |
 | Performance budgets | 🟡 Partial | Local load harness with committed artifacts (`docs/testing/load-results-2026-10-26-post-fix.json`); **no Lighthouse budget run**, and staging capacity is unmeasured — plan: [07-TESTING_PLAN.md](./07-TESTING_PLAN.md) §8 |
 | SEO metadata & discoverability | 🟡 Partial | Title/description/OG/Twitter + `robots.txt` are NovaCart-branded and valid (2026-10-26); canonical URL, `og:image`, `sitemap.xml` are **deferred pending the production domain** (owner input — placeholders would be wrong); SPA — no SSR/prerendering, so crawlability relies on the PWA shell + correct metadata |
@@ -235,8 +235,11 @@ editing, size variants, discount/coupon engine, multi-currency, a
 customer-facing refund UI (refunds are an admin API action — `POST
 /api/orders/refund`), product reviews submission, social login, push
 notifications, background sync, order-detail route in the storefront,
-Docker/CI, and any form of session revocation. Adding any of these is new
-scope, not a bug fix.
+and any form of session revocation. Adding any of these is new
+scope, not a bug fix. Container images, Compose, Kubernetes manifests,
+Terraform, and GitHub Actions workflows are in the repository; see
+[06-DEPLOYMENT.md](./06-DEPLOYMENT.md). They are not a claim that every app
+auto-deploys to EKS or that a public admin hostname exists.
 
 ## 7. Related documentation
 

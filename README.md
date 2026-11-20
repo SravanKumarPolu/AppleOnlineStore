@@ -1,150 +1,172 @@
 # NovaCart
 
-A full-stack e-commerce system: **storefront PWA + admin dashboard + REST/realtime API**, built for a consumer-electronics catalog (iPhone, iPad, Mac, Watch, AirPods, Accessories) with **PayPal** as the integrated payment method.
+**React storefront · React admin · Node.js/Express API · MongoDB · Socket.IO · Docker · Kubernetes · AWS EKS**
 
-> **Naming:** this project's official name is **NovaCart**. You may still find
-> legacy branding (`SKR E-Commerce`, `Apple Store`) in older assets and page
-> copy — those are historical; see `AGENTS.md` §5.
->
-> **Documentation:** everything in [`docs/`](docs/) is as-built and verified.
-> The ~30 other root-level `*.md` files are development history and may be
-> outdated — when in doubt, `docs/` wins.
+NovaCart is a full-stack e-commerce system for a consumer-electronics catalog. It includes a customer storefront, an operator dashboard, a REST and realtime API, PayPal checkout, and infrastructure-as-code. The product name is **NovaCart**. Older assets and reports may still say AppleOnlineStore, SKR E-Commerce, or SKR Store; those names are historical.
 
-## What works today (short version)
+> **Evidence boundary (20 November 2026).** This README describes source code, committed infrastructure, and recorded test runs. A manifest or workflow shows that the artifact exists; it does not show that an AWS account is serving traffic today. This pass inspected repository files and GitHub Actions run logs. It did not redeploy, call AWS, or rerun the test suites.
 
-- **Storefront** (`frontend/`): catalog + search + category filters, product
-  detail, cart (color variants, guest → server sync), address book, PayPal
-  checkout, order history with realtime status updates, installable PWA with
-  offline overlay.
-- **Admin** (`admin/`): env-credential login, product add/remove (Cloudinary
-  images), order fulfillment (6-status lifecycle), analytics views
-  (dashboard / sales / products / users / search).
-- **Backend** (`backend/`): Express + Mongoose + Socket.IO, JWT auth with
-  account lockout, signature-verified PayPal webhooks with a recoverable
-  idempotency state machine, health endpoints, graceful bounded shutdown,
-  boot-time configuration guardrails, log redaction, shared CORS allowlist,
-  credential-safe MongoDB connection resolver. **43 test suites /
-  441 tests passing** (plus 24 frontend files / 125 tests, 13 admin files /
-  70 tests, and 51 real-browser E2E checks across Chromium/Firefox/WebKit).
+## Applications
 
-### Known limitations (documented, not hidden)
+| Component | Source | What the code does |
+| --- | --- | --- |
+| Customer storefront | [`frontend/`](frontend/) | React 18 + Vite PWA: catalog, search, cart, address book, checkout, order history, Socket.IO order updates, offline overlay |
+| Admin dashboard | [`admin/`](admin/) | React 19 + Vite: product add/remove (Cloudinary images), order fulfillment, analytics views |
+| API and realtime backend | [`backend/`](backend/) | Node.js (ESM) + Express + Mongoose + Socket.IO, JWT auth, order and payment APIs, PayPal webhooks, health checks, graceful shutdown |
+| Data | MongoDB | Mongoose models. Orders store item and address snapshots; later catalog edits do not rewrite history |
+| Integrations | PayPal, Cloudinary, SMTP | PayPal order and webhook flow, product images, transactional email when SMTP is configured |
 
-- **Refunds are an admin API only** (`POST /api/orders/refund`) — there is no
-  dashboard button or customer-facing flow. Full refunds only; a PayPal
-  refund that is PENDING or whose outcome is unknown stays
-  `refundStatus:'pending'` and requires reconciliation rather than being
-  reported as complete (K-14, fixed 2026-10-26).
-- **PayPal is verified against mocks only.** Sandbox credentials and order
-  creation work, but a signed webhook end-to-end is blocked on
-  `PAYPAL_WEBHOOK_ID` + a public HTTPS host + a sandbox buyer session — see
-  `docs/devops/08`.
-- **Inventory is exactly-once on both ends (2026-10-26, K-13 + K-21).**
-  Restoration credits stock and its durable proof in one atomic single-document
-  update (`restorationCredits`), and creation inserts the order **draft first**,
-  then debits each line with a `<orderId>:<index>` marker in the same product
-  update, then commits — so a crash leaves a recoverable draft instead of lost
-  units, and the sweep settles it exactly once (`docs/09` §5.2, `docs/10` §18.4).
+Checkout behavior that is easy to misread:
 
-- **COD and Card checkout create real orders** (fixed 2026-10-24, K-1):
-  COD/Card submit through `POST /api/orders` as `paymentStatus:'pending'`
-  orders. Card remains gateway-less — it records the intent; the store
-  collects the payment manually. Details: `docs/01-PRD.md` §5.
-- Password-reset emails render correctly (K-4 fixed 2026-10-24 — greeting by
-  name, working `FRONTEND_URL`-based link).
-- Address saves from the storefront UI work end-to-end (K-11 fixed
-  2026-10-24 — every mutation caller now uses the routed plural
-  `/api/user/addresses…` endpoints, locked by component specs).
-- The sales-analytics `categoryBreakdown` aggregates real product categories
-  (K-12 fixed 2026-10-24 — the `$lookup` now normalizes string product ids to
-  ObjectId before joining, with garbage ids skipped safely).
-- Orders decrement stock atomically and restore it exactly once on
-  cancel/refund/expiry (K-5 fixed 2026-10-25, K-13 fixed 2026-10-26); the admin
-  panel has no mobile navigation (K-6) — its test coverage is complete for the
-  shipped surface (auth chrome, dashboard, Orders/Add/List, the four analytics
-  pages and the Sidebar; 13 files / 70 tests).
-- Live PayPal end-to-end is **UNVERIFIED** until the sandbox checklist runs
-  (`docs/devops/08-…`); credential rotation is partially done — `JWT_SECRET`
-  + admin credentials rotated 2026-10-24, provider credentials pending owner
-  action (`docs/devops/07-…`, `docs/devops/09-…`). Full list: `docs/01-PRD.md` §5.
+- **COD and Card** create real orders through `POST /api/orders` with `paymentStatus: 'pending'`. Card does not call a card gateway. The store collects that payment manually.
+- **PayPal** orders are created through `POST /api/orders/paypal/create`. The plain order endpoint rejects `PayPal` so a webhook can match a PayPal order id.
+- **Refunds** are an admin API (`POST /api/orders/refund`). There is no dashboard button and no customer refund flow. `refundStatus` is the refund record; a pending or unknown PayPal refund is not treated as money returned.
+- **Inventory** debits and restores stock with per-line markers so a retry does not move the same unit twice. See [`docs/09-OPERATIONS.md`](docs/09-OPERATIONS.md).
+- **Socket.IO** order updates are used by both the storefront and admin dashboard. The storefront restores authorized order-room subscriptions after reconnect; the admin dashboard receives order notifications and status updates through its authenticated realtime provider. More than one backend replica needs the Redis adapter; cross-pod delivery is not proven by the in-repo spec alone.
+- A **signed PayPal sandbox** approval, capture, and webhook round trip is still **UNVERIFIED**. The checklist is [`docs/devops/08-PAYPAL-SANDBOX-VALIDATION-CHECKLIST.md`](docs/devops/08-PAYPAL-SANDBOX-VALIDATION-CHECKLIST.md).
 
-## Quick start
+## Architecture
+
+```mermaid
+flowchart TB
+    Shopper[Customer browser] --> Store[React storefront / PWA]
+    Operator[Store operator] --> Admin[React admin dashboard]
+    Store -->|REST /api and Socket.IO| API[Node.js / Express and Socket.IO]
+    Admin -->|REST /api| API
+    Admin -->|Socket.IO| API
+    API --> Mongo[(MongoDB)]
+    API --> PayPal[PayPal APIs and verified webhooks]
+    API --> Cloudinary[Cloudinary images]
+    API --> Email[SMTP provider]
+```
+
+The AWS layout, its limits, and the CI/CD boundary are in [`docs/architecture/DEPLOYMENT_ARCHITECTURE.md`](docs/architecture/DEPLOYMENT_ARCHITECTURE.md). Commands are in [`docs/06-DEPLOYMENT.md`](docs/06-DEPLOYMENT.md).
+
+## Run locally
+
+Use the `.env.example` files. Do not commit real `.env` files.
 
 ```bash
-# 1) Backend
+# Terminal 1 — API and Socket.IO (port 3001 by default)
 cd backend
-cp .env.example .env      # fill MONGODB_URI, JWT_SECRET, ADMIN_EMAIL/PASSWORD,
-                          # PAYPAL_* (sandbox ok), SMTP_*, CLOUDINARY_*
-npm install
-npm run dev               # API + Socket.IO
-
-# 2) Storefront
-cd frontend
-cp .env.example .env      # VITE_BACKEND_URL, VITE_PAYPAL_CLIENT_ID
-npm install
+cp .env.example .env
+npm ci
 npm run dev
 
-# 3) Admin
+# Terminal 2 — storefront
+cd frontend
+cp .env.example .env
+npm ci
+npm run dev
+
+# Terminal 3 — admin (port 5174)
 cd admin
-cp .env.example .env      # VITE_BACKEND_URL
-npm install
-npm run dev               # port 5174
+cp .env.example .env
+npm ci
+npm run dev
 ```
 
-The backend refuses to boot with fatal misconfigurations (e.g. live PayPal
-credentials that are placeholders, or production without `JWT_SECRET`) —
-that is by design; the startup report names the variables (never values).
+The backend exits on fatal misconfiguration (live PayPal placeholders, or production without `JWT_SECRET`). The startup report prints variable names, not values.
 
-## Testing
+### Docker Compose
+
+[`compose.yaml`](compose.yaml) runs three **prebuilt** images. It has no `build:` block. Storefront and admin wait until the backend `/health/ready` check passes. Published ports are loopback only.
 
 ```bash
-cd backend  && npm test                # canonical regression gate (43 suites / 441 tests)
-cd backend  && npm run verify:startup  # boots real server vs in-memory Mongo; readiness + graceful shutdown
-cd backend  && npm run security:secrets -- --history   # tree + history, value-free
-cd backend  && npm run security:dangling              # unreachable git objects holding a live secret
-cd frontend && npm run test -- --run    # 125 vitest tests (24 files)
-cd admin    && npm run test -- --run    # 70 vitest tests (13 files)
-cd frontend && npm run test:e2e         # 51 real-browser checks (17 × Chromium/Firefox/WebKit)
+docker build -t novacart-backend:v2 ./backend
+docker build -t novacart-frontend:v3 ./frontend
+docker build -t novacart-admin:v2 ./admin
+docker compose up -d
+docker compose ps
 ```
 
-⚠️ `cd backend && npm run test:smoke` is a different thing (needs a live
-MongoDB + SMTP) — not the regression suite. Full command truth table:
-`docs/07-TESTING_PLAN.md` §3. The E2E run boots the real backend against an
-in-memory MongoDB plus the vite dev server (first run downloads the
-Playwright Chromium binary). Latest executed results:
-`docs/testing/FINAL_TEST_EXECUTION.md`.
+Local container URLs: storefront `http://127.0.0.1:8080`, admin `http://127.0.0.1:8081`, API `http://127.0.0.1:3001`.
 
-## Documentation map
+Production image builds leave `VITE_BACKEND_URL` empty on purpose. The Nginx images proxy `/api/` and `/socket.io/` to the Compose service `backend`. `VITE_PAYPAL_CLIENT_ID` is a **build** argument. If it is empty, the storefront shows PayPal as unavailable. Compose does not inject Vite variables into a running container.
+
+These URLs are local access points. They are not the public site.
+
+## Tests and CI
+
+```bash
+cd backend  && npm test                  # Jest regression suite
+cd backend  && npm run verify:startup    # real process, in-memory Mongo
+cd frontend && npm run test -- --run
+cd admin    && npm run test -- --run
+cd frontend && npm run test:e2e          # Playwright; downloads browsers on first run
+```
+
+`npm run test:smoke` in `backend/` needs a live MongoDB and SMTP. It is not the regression gate. The command table is in [`docs/07-TESTING_PLAN.md`](docs/07-TESTING_PLAN.md).
+
+Recorded gates, **not re-run on 20 November 2026**:
+
+| Record | Backend | Storefront | Admin | Browser |
+| --- | --- | --- | --- | --- |
+| [`AGENTS.md`](AGENTS.md), backend re-run 2026-11-04 | 47 suites / 534 tests | — | — | — |
+| [`AGENTS.md`](AGENTS.md), 2026-10-27 auth pass | — | 25 files / 142 tests | 13 files / 71 tests | 18 tests × 3 engines = 54 |
+| [`docs/10-FINAL-STABILIZATION-REPORT.md`](docs/10-FINAL-STABILIZATION-REPORT.md), 2026-10-26 | 43 suites / 441 tests | 24 files / 125 tests | 13 files / 70 tests | 17 × 3 engines = 51 |
+
+Use the report that matches the date of the run. The 2026-10-26 report does not prove the later counts.
+
+[`.github/workflows/novacart-ci-cd.yml`](.github/workflows/novacart-ci-cd.yml) lints, tests, and builds all three apps on a pull request or push to `main`, then builds and Trivy-scans the images. A push to `main` publishes all three images to GHCR and the **backend** image to ECR.
+
+[`.github/workflows/novacart-eks-deploy.yml`](.github/workflows/novacart-eks-deploy.yml) is a separate **manual** workflow. It deploys one existing backend image SHA to the `novacart-backend` Deployment, on a tagged self-hosted macOS runner, with AWS OIDC and a guarded rollback in [`scripts/deploy-eks-backend.sh`](scripts/deploy-eks-backend.sh).
+
+That pair of workflows does not deploy the storefront and admin to EKS on every push. Two other manual workflows only check an AWS identity (`novacart-eks-auth.yml`, `aws-oidc-test.yml`). `novacart-worker-tests.yml` syntax-checks and unit-tests the EC2 worker scripts. It does not roll out the applications.
+
+**Latest observed CI run:** [run 44732558120, attempt 2](https://github.com/SravanKumarPolu/AppleOnlineStore/actions/runs/44732558120/attempts/2) for commit `483a25e` failed overall; retrying did not clear the image-scan failures. All three Verify jobs and the backend image build/scan passed. Frontend and admin image builds passed, but each Trivy scan failed on six NGINX OS findings (2 HIGH, 4 CRITICAL; installed `nginx` `1.30.6-r1`, fixed version reported as `1.30.7-r0`). GHCR/ECR publishing was skipped because this was a pull-request run; no publishing, authentication, or permission failure was observed. See [the deployment guide](docs/06-DEPLOYMENT.md#latest-observed-ci-run) for the CVE list and job details. Do not treat this run or the entire pipeline as passing.
+
+**Local remediation validated:** the frontend and admin Dockerfiles now use `nginxinc/nginx-unprivileged:mainline-alpine3.24` (NGINX `1.31.7-r1` in the tested image). Both images built and returned zero findings in Trivy 0.70.0 scans, including a separate all-severity scan that did not exclude unfixed issues. Storefront tests passed (26 files / 170 tests), admin tests passed (15 files / 85 tests), and both containers passed `nginx -t`, ran as UID 101, and returned HTTP 200. GitHub Actions has not yet rerun against this change; the remote CI status remains unverified. Details and the remaining Alpine EOL warning are in [the deployment guide](docs/06-DEPLOYMENT.md#latest-observed-ci-run).
+
+## AWS and Kubernetes in this repository
+
+| Path | What is committed |
+| --- | --- |
+| [`terraform/`](terraform/) | VPC and public subnets, security groups, IAM, three ECR repositories, EKS cluster `novacart-dev-eks`, node and addon resources |
+| [`k8s/`](k8s/) | Local Deployments and Services, backend HPA (1–3 replicas), Redis for local multi-replica Socket.IO, Gateway HTTPRoutes on `*.novacart.localhost` |
+| [`k8s/aws/`](k8s/aws/) | Frontend, admin, and backend Deployments and Services at **one replica** each, plus an ALB Ingress |
+
+The Ingress hosts are `novakart.xyz` and `www.novakart.xyz`. Paths `/` go to the storefront, and `/api` and `/socket.io` go to the backend. **No Ingress rule names `admin.novakart.xyz`.** The admin Deployment and ClusterIP Service are in the manifests. A public admin hostname is not established by this repository.
+
+The owner reports using the admin dashboard locally, not through a public admin domain. The previously verified Kubernetes access method was a port-forward:
+
+```bash
+kubectl --context novacart-aws \
+  -n novacart port-forward deployment/novacart-admin 8081:8080
+# http://127.0.0.1:8081
+```
+
+This local URL is reached through the Kubernetes context and port-forward; it does not establish public DNS or HTTPS. The local Gateway names `shop.novacart.localhost` and `admin.novacart.localhost` are separate routes.
+
+The AWS manifests pin ECR image tags. Those tags are desired state in git. They are not proof the cluster is running, that DNS resolves, or that TLS is valid today. Terraform comments in `ecr.tf` still say “do not apply yet”; treat apply as an owner decision.
+
+Monitoring, alerting, and log aggregation are not implemented. Health endpoints and structured logs are the observability that ships in the app.
+
+## Known limits
+
+- Signed PayPal sandbox end-to-end and live SMTP delivery are not established by the current docs.
+- Provider credential rotation and git-history hygiene remain owner actions. See [`docs/devops/07-CREDENTIAL-ROTATION-RUNBOOK.md`](docs/devops/07-CREDENTIAL-ROTATION-RUNBOOK.md).
+- Older pages that say Docker, CI, Terraform, or Kubernetes are missing are superseded. The correction notes are in [`docs/review/DOCUMENTATION_REVIEW.md`](docs/review/DOCUMENTATION_REVIEW.md).
+
+## Documentation
 
 | Doc | Content |
-|---|---|
-| [`docs/01-PRD.md`](docs/01-PRD.md) | Features with status labels + known defects |
-| [`docs/02-APP_FLOWS.md`](docs/02-APP_FLOWS.md) | Shopper/admin/system flows |
-| [`docs/03-TECH_ARCHITECTURE.md`](docs/03-TECH_ARCHITECTURE.md) | Stacks, module map, dead-code map |
-| [`docs/04-DATABASE_SCHEMA.md`](docs/04-DATABASE_SCHEMA.md) | 11 MongoDB collections |
-| [`docs/05-API_REFERENCE.md`](docs/05-API_REFERENCE.md) | 45+5 endpoints, Socket.IO events |
-| [`docs/06-DEPLOYMENT.md`](docs/06-DEPLOYMENT.md) | Current manual deployment + roadmap |
-| [`docs/07-TESTING_PLAN.md`](docs/07-TESTING_PLAN.md) | Tests, commands, traceability |
-| [`docs/08-SECURITY.md`](docs/08-SECURITY.md) | Security model + risk register |
-| [`docs/09-OPERATIONS.md`](docs/09-OPERATIONS.md) | Health, webhook ops, incidents |
-| [`docs/architecture/`](docs/architecture/) | **Pre-DevOps audit + corrected diagrams** (system, components, database, auth, checkout/payment, DevOps baseline) |
-| [`docs/testing/`](docs/testing/) | **Final test execution, security regression, known limitations, pre-DevOps readiness** |
-| [`docs/devops/`](docs/devops/) | Phase 1 engineering records (preserved) |
-| [`AGENTS.md`](AGENTS.md) | Repo guide for AI agents & engineers |
+| --- | --- |
+| [`docs/01-PRD.md`](docs/01-PRD.md) | Feature catalog and defect history |
+| [`docs/02-APP_FLOWS.md`](docs/02-APP_FLOWS.md) | Shopper, admin, and system flows |
+| [`docs/03-TECH_ARCHITECTURE.md`](docs/03-TECH_ARCHITECTURE.md) | Stacks, modules, dead code |
+| [`docs/04-DATABASE_SCHEMA.md`](docs/04-DATABASE_SCHEMA.md) | MongoDB collections |
+| [`docs/05-API_REFERENCE.md`](docs/05-API_REFERENCE.md) | HTTP API and Socket.IO events |
+| [`docs/06-DEPLOYMENT.md`](docs/06-DEPLOYMENT.md) | Local, Compose, Kubernetes, and AWS configuration |
+| [`docs/07-TESTING_PLAN.md`](docs/07-TESTING_PLAN.md) | Commands and traceability |
+| [`docs/08-SECURITY.md`](docs/08-SECURITY.md) | Auth model and risk register |
+| [`docs/09-OPERATIONS.md`](docs/09-OPERATIONS.md) | Health, webhooks, incidents |
+| [`docs/10-FINAL-STABILIZATION-REPORT.md`](docs/10-FINAL-STABILIZATION-REPORT.md) | 2026-10-26 acceptance report |
+| [`docs/architecture/DEPLOYMENT_ARCHITECTURE.md`](docs/architecture/DEPLOYMENT_ARCHITECTURE.md) | Current deployment diagrams |
+| [`docs/architecture/SYSTEM_ARCHITECTURE.md`](docs/architecture/SYSTEM_ARCHITECTURE.md) | Application architecture as of 2026-10-26 |
+| [`docs/architecture/CHECKOUT_PAYMENT_FLOW.md`](docs/architecture/CHECKOUT_PAYMENT_FLOW.md) | Checkout and payment |
+| [`docs/review/DOCUMENTATION_REVIEW.md`](docs/review/DOCUMENTATION_REVIEW.md) | What this refresh verified |
+| [`docs/devops/`](docs/devops/) | Phase 1 records (preserved for their dates) |
+| [`AGENTS.md`](AGENTS.md) | Repository guide for engineers and agents |
 
-## Status
-
-Phase 1 (security, reliability, testing) is complete with a **CONDITIONAL
-GO** for production. Go-live gates partially executed (2026-10-24):
-`JWT_SECRET` + admin credentials rotated and live-verified, all
-locally-provable validation items green
-([`docs/devops/09-GO-LIVE-GATES-EXECUTION.md`](docs/devops/09-GO-LIVE-GATES-EXECUTION.md)).
-Still gated on owner actions: provider-credential rotations + canonical-repo
-git history purge, and the real-PayPal sandbox validation round
-(`docs/devops/08-…`). Docker/CI/monitoring are planned roadmap work, not
-present in this repository (`docs/06-DEPLOYMENT.md` §6).
-
-**Pre-DevOps stabilization (2026-10-26): COMPLETE — READY for the DevOps
-phase.** Full audit, fixes (MongoDB connection resolver, admin-token boundary
-in shopper middleware, environment-driven CORS, production-hidden debug
-endpoints, credential redaction in legacy scripts) and verified outcomes:
-[`docs/testing/PRE_DEVOPS_READINESS.md`](docs/testing/PRE_DEVOPS_READINESS.md).
+When a root-level history note disagrees with `docs/`, `docs/` wins. [`AGENTS.md`](AGENTS.md) §6 lists which root files are history.
