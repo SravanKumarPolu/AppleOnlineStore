@@ -1,6 +1,8 @@
 # DevOps Baseline — What Exists Today and What DevOps Must Provide
 
-**Purpose:** the hand-off contract for the DevOps implementation phase. Everything in §1 is **implemented and verified** in this repository. Everything in §2 is **required** and explicitly **not implemented** in this stabilization phase (no Docker, Kubernetes, Terraform, Jenkins, GitHub Actions, or AWS resources were introduced, per the task restrictions).
+**Purpose:** the hand-off contract written for the DevOps phase on 2026-10-26. Everything in §1 is the **application** baseline verified at that date. §2 listed work that was out of scope for that stabilization pass.
+
+**Addendum (20 November 2026):** Dockerfiles, `compose.yaml`, `k8s/`, `k8s/aws/`, `terraform/`, and GitHub Actions workflows are now in the repository. §2 items 1 (containerization), 4 (probe wiring — probes are now on the backend Deployments), and 7 (CI on pull requests) are superseded by [../06-DEPLOYMENT.md](../06-DEPLOYMENT.md) and [DEPLOYMENT_ARCHITECTURE.md](./DEPLOYMENT_ARCHITECTURE.md). Still accurate in §2: no external log-aggregation product, Socket.IO multi-replica limits, secrets must not be committed, and PayPal go-live is unfinished. The EKS workflow deploys the backend only, and only on manual dispatch. This page’s §2 body is kept as the 2026-10-26 contract.
 
 ---
 
@@ -65,9 +67,11 @@
 
 ---
 
-## 2. Required from the DevOps phase (not implemented here)
+## 2. Required from the DevOps phase (list as written on 2026-10-26)
 
-1. **Containerization**: Dockerfiles for backend (Node 22 runtime, non-root user, `NODE_ENV=production`, `CMD node server.js`) and static builds (frontend/admin via nginx or CDN). The repo currently contains **no** Dockerfile/compose — the `frontend/Dockerfile` reference in historical notes does not exist in the tree (verified).
+Item 1 says the tree has no Dockerfile. That was true on the date of this baseline and is **not** true now — see the addendum at the top of this file. The rest of the list is the original hand-off text.
+
+1. **Containerization**: Dockerfiles for backend (Node 22 runtime, non-root user, `NODE_ENV=production`, `CMD node server.js`) and static builds (frontend/admin via nginx or CDN). As of 2026-10-26 the repo contained **no** Dockerfile or Compose file. As of 20 November 2026, `backend/Dockerfile`, `frontend/Dockerfile`, `admin/Dockerfile`, and `compose.yaml` are present (Node 24 images, non-root, Nginx for the two SPAs).
 2. **Secrets management**: external secret store for `JWT_SECRET`, `ADMIN_EMAIL`/`ADMIN_PASSWORD`, `MONGODB_URI`, `PAYPAL_CLIENT_ID`/`SECRET`/`WEBHOOK_ID`, `SMTP_*`, `CLOUDINARY_*`, `FRONTEND_URL`/`ADMIN_URL`. Rotation runbook: `docs/devops/07-CREDENTIAL-ROTATION-RUNBOOK.md`.
 3. **TLS termination** in front of the API and the static hosts (CORS origins must then be the public HTTPS origins).
 4. **Orchestration**: liveness probe `/health/live`, readiness probe `/health/ready`, `SIGTERM`-honoring termination grace ≥ `SHUTDOWN_TIMEOUT_MS` (default 10 s).

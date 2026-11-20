@@ -1,6 +1,10 @@
 # System Architecture — NovaCart (AppleOnlineStore)
 
-**Authority:** this document describes the system as implemented in source code on 2026-10-26 (post Phase 2–4 stabilization). Where future DevOps infrastructure is shown it is **explicitly marked PROPOSED** — nothing in this section exists in the repository today.
+**Authority:** this document preserves the **application** baseline from 2026-10-26 (post Phase 2–4 stabilization). The dashed “proposed DevOps” boxes below are that day’s hand-off diagram.
+
+**Infrastructure update (20 November 2026):** Dockerfiles, Compose, Kubernetes manifests, Terraform, and GitHub Actions are now in the repository. Read [DEPLOYMENT_ARCHITECTURE.md](./DEPLOYMENT_ARCHITECTURE.md) and [../06-DEPLOYMENT.md](../06-DEPLOYMENT.md) for the current deployment picture. Log aggregation and a live-cluster claim are still outside this page. The diagrams are kept so the 2026-10-26 baseline stays intact.
+
+**Realtime update (20 November 2026):** the admin dashboard now also opens an authenticated Socket.IO connection and consumes order events. The storefront reconnect/room-resubscription flow and older diagrams below remain the 2026-10-26 baseline; see [DEPLOYMENT_ARCHITECTURE.md](./DEPLOYMENT_ARCHITECTURE.md) for the current client boundaries.
 
 ---
 
@@ -34,6 +38,7 @@ flowchart TB
     ADMINOP -->|"HTTPS browser"| ADMINCONSOLE
     STOREFRONT -->|"REST /api/* (fetch, token header)"| API
     ADMINCONSOLE -->|"REST /api/* (token / Bearer)"| API
+    ADMINCONSOLE <-->|"Socket.IO (websocket, JWT auth)"| API
     STOREFRONT <-->|"Socket.IO (websocket, JWT auth)"| API
 
     API --> MONGO
@@ -42,7 +47,7 @@ flowchart TB
     API -->|"image upload / destroy"| CLOUD
     API -->|"welcome + password-reset mail<br/>(non-blocking, optional)"| SMTP
 
-    subgraph future["PROPOSED future DevOps infrastructure — NOT IMPLEMENTED"]
+    subgraph future["2026-10-26 hand-off box — containers and CI now exist; see DEPLOYMENT_ARCHITECTURE.md"]
         style future stroke-dasharray: 6 4,fill:#f5f5f5
         LB["Load balancer / TLS termination"]
         DOCKER["Docker images"]
@@ -54,7 +59,7 @@ flowchart TB
 **Key facts verified from code**
 
 - The storefront is a PWA (`vite-plugin-pwa`, service worker, offline page); the admin console is a plain SPA.
-- Only the **storefront** holds a Socket.IO connection; the admin console has no realtime client (see `ARCHITECTURE_AUDIT.md` §3.1).
+- The storefront and admin dashboard both hold authenticated Socket.IO connections. The admin connection and Orders-page event handling were added after the 2026-10-26 audit; its §3.1 finding is historical.
 - PayPal sandbox/live selection is centralized in `config/paypalEnv.js` — the capture flow and the webhook verifier can never target different PayPal environments.
 - MongoDB database selection: complete `MONGODB_URI` used verbatim; bare host URI gets `MONGODB_DB` (default `e-commerce`) appended by `config/mongodb.js`.
 
@@ -98,9 +103,9 @@ flowchart TB
 
 ---
 
-## 3. Logical architecture for future DevOps implementation
+## 3. Logical architecture (2026-10-26 snapshot)
 
-The diagram below is the **current logical architecture** (solid) with the **proposed DevOps overlay** (dashed, red). The dashed elements do not exist yet; they are the contract the DevOps phase will implement.
+The solid boxes are the application. The dashed box was the DevOps hand-off on 2026-10-26. Container images, a registry publish path, Kubernetes manifests, and CI workflows have since been added; log aggregation is still not in the repo. Current deployment limits are in [DEPLOYMENT_ARCHITECTURE.md](./DEPLOYMENT_ARCHITECTURE.md). This diagram is preserved as the snapshot, not redrawn.
 
 ```mermaid
 flowchart LR
@@ -118,7 +123,7 @@ flowchart LR
     BE --> DBX
     BE --> EXT
 
-    subgraph proposed["PROPOSED — DevOps phase (NOT IMPLEMENTED)"]
+    subgraph proposed["2026-10-26 DevOps hand-off — deployment files have since landed; see DEPLOYMENT_ARCHITECTURE.md"]
         style proposed stroke-dasharray: 6 4
         direction TB
         TLSTERM["TLS termination / reverse proxy"]
